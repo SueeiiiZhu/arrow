@@ -1,0 +1,16 @@
+# 通用：依赖 / 构建产物 / 编辑器残留 — 任何层级都忽略
+node_modules/
+dist/
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 根目录默认忽略所有内容；仅显式允许我们认可的项目路径。
+# 这样 APK 反编译副产物（_extracted/、classes*.dex、*.properties、AndroidManifest.xml 等）
+# 不会被任何 `git add` 不小心带入仓库。
+/*
+!/.gitignore
+!/app

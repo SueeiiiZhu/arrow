@@ -1,0 +1,18 @@
+{
+  "name": "escape-arrows",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:core": "pnpm -F @ea/core build",
+    "build:renderer": "pnpm -F @ea/renderer build",
+    "dev:web": "pnpm -F @ea/web dev",
+    "build:web": "pnpm -F @ea/web build",
+    "build:wxgame": "pnpm -F @ea/wxgame build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

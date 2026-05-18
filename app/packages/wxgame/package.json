@@ -1,0 +1,17 @@
+{
+  "name": "@ea/wxgame",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "gen": "node scripts/build-levels.mjs",
+    "build": "pnpm gen && node scripts/bundle.mjs",
+    "typecheck": "pnpm gen && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ea/core": "workspace:*",
+    "@ea/renderer": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
