@@ -6,6 +6,10 @@ This file is a thin Claude Code-specific overlay. **The canonical guide for work
 
 `~/.claude/CLAUDE.md` sets several global rules (default Chinese output, end-to-end execution, subagent model routing by task type). All of those continue to apply here — this file does not override them. AGENTS.md repeats the user-preference summary in English so non-Claude tools see it too, but the authoritative version of those preferences lives in the user's global config.
 
+## Output language (hard rule)
+
+**Always reply to the user in Chinese, regardless of the language they typed in.** Keep code identifiers, file paths, library names, and technical terms in their original English; everything else in your user-facing text is Chinese. This applies even when the user writes the prompt in English, French, or anything else — translate your response into Chinese. The rule also covers commit messages, PR descriptions, and any prose written into project docs that are not explicitly designated as English. This bullet is the duplicated, in-repo restatement of the global preference because it is project-critical.
+
 ## When working in this repo
 
 - Prefer `Edit` over `Write` when changing existing files.

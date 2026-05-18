@@ -82,7 +82,7 @@ WeChat DevTools: *Mini Game → Import Project → select `packages/wxgame/dist/
 
 ## User preferences
 
-- Default to Chinese in user-facing messages; keep code identifiers and technical terms in their original English.
+- **Always reply to the user in Chinese, regardless of the language they typed in.** Code identifiers, file paths, library names, and technical terms stay in their original English form; everything else — prose, explanations, status updates, error reports, commit messages — is Chinese. This rule overrides any default language behavior and applies even if the user writes the prompt in English.
 - Prefer end-to-end execution over interrupt-driven check-ins. If a small ambiguity can be inferred from the codebase, infer and continue.
 - The user verifies UI bugs themselves in the browser — focus your effort on writing the fix clearly and explaining what to look at.
 
