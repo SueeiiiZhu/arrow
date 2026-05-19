@@ -1,10 +1,4 @@
-import type {
-  ArrowData,
-  LevelData,
-  OriginalLevelFile,
-  RawLevelFile,
-  Vec2,
-} from "./types.js";
+import type { ArrowData, LevelData, OriginalLevelFile, RawLevelFile, Vec2 } from "./types.js";
 
 /** Decode the neutral on-disk format. */
 export function loadLevel(raw: RawLevelFile): LevelData {
@@ -68,8 +62,7 @@ export function validateLevel(level: LevelData): string | null {
       const cur = a.path[k]!;
       const dx = cur.x - prev.x;
       const dy = cur.y - prev.y;
-      const adj =
-        (Math.abs(dx) === 1 && dy === 0) || (dx === 0 && Math.abs(dy) === 1);
+      const adj = (Math.abs(dx) === 1 && dy === 0) || (dx === 0 && Math.abs(dy) === 1);
       if (!adj) return `arrow#${i}: non-adjacent step at ${k}`;
     }
     // facing should be negation of first step

@@ -57,11 +57,32 @@ interface WxSystemInfo {
   pixelRatio: number;
 }
 
+interface WxLoadSubpackageTask {
+  onProgressUpdate?(cb: (e: { progress: number }) => void): void;
+}
+
+interface WxLoadSubpackageOpts {
+  name: string;
+  success?: () => void;
+  fail?: (err: { errMsg: string }) => void;
+  complete?: () => void;
+}
+
 interface WxAPI {
   createCanvas(): WxCanvas;
   getSystemInfoSync(): WxSystemInfo;
   onTouchStart(cb: (e: WxTouchEvent) => void): void;
   offTouchStart(cb: (e: WxTouchEvent) => void): void;
+  getStorageSync(key: string): unknown;
+  setStorageSync(key: string, value: unknown): void;
+  removeStorageSync(key: string): void;
+  // wxgame Web Audio (base library >= 2.19.0). Returns a WebAudioContext
+  // whose shape matches the standard AudioContext closely enough that the
+  // shared synth module (which uses the renderer's AudioContextLike) works.
+  createWebAudioContext?(): unknown;
+  // Subpackage loading. The subpackage's `entry` file (configured in
+  // game.json) auto-executes on success.
+  loadSubpackage(opts: WxLoadSubpackageOpts): WxLoadSubpackageTask;
 }
 
 declare const wx: WxAPI;

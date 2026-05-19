@@ -53,19 +53,24 @@ Do not unilaterally revisit these — the user has signed off on each after expl
 # from app/
 pnpm install                  # first time
 pnpm dev:web                  # H5 dev server, http://localhost:5173
-pnpm build:web                # H5 production build → packages/web/dist/
-pnpm build:wxgame             # WeChat single-file bundle → packages/wxgame/dist/wxgame/
+pnpm build:web                # H5 production build → packages/web/dist/  (currently OOMs in CI; see HANDOFF.md)
+pnpm build:wxgame             # WeChat main bundle + 12 subpackages → packages/wxgame/dist/wxgame/
 pnpm typecheck                # tsc --noEmit across all workspaces
+pnpm test                     # node:test (@ea/core unit tests)
+pnpm lint                     # Biome (format + lint + import organize), check-only
+pnpm lint:fix                 # Biome with safe autofixes applied
 ```
+
+GitHub Actions (`../.github/workflows/ci.yml`) runs lint → typecheck → test → wxgame build → 200-level solver sample on every push / PR to `main`. Biome config lives in `biome.json`; `noNonNullAssertion`, `noExplicitAny`, and `noAssignInExpressions` are intentionally off to match existing code patterns.
 
 WeChat DevTools: *Mini Game → Import Project → select `packages/wxgame/dist/wxgame/`*.
 
 ## Working conventions
 
-- Run `pnpm typecheck` after multi-file edits before claiming success.
+- Run `pnpm typecheck` after multi-file edits before claiming success. CI also runs `pnpm lint` (Biome) and `pnpm test`, so check those locally if you touched files outside `*.d.ts` or `levels_data/`.
 - After changing `packages/core/`, run `pnpm build:core` so external `node` scripts (solvers, validators) see the new compiled output.
 - For UI / interaction changes, start the dev server and describe the verification steps to the user — they will eyeball the result.
-- Keep throwaway scripts out of `/tmp/`; if a script becomes worth reusing, add it under a new `packages/tools/` (not yet created — log it in HANDOFF.md when you do).
+- Keep throwaway scripts out of `/tmp/`; reusable scripts belong in `packages/tools/` (`@ea/tools`, private — solvers, corpus analyses).
 - Commit messages: concise, in Chinese (matches the user's repo style and existing history).
 
 ## Do / Don't

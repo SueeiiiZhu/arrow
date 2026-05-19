@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Every job runs inside app/ — repo root has only the legal-safety .gitignore
+# and reverse-engineered APK artifacts. The pnpm workspace is the app/ subtree.
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: pnpm lint
+
+      - name: Typecheck (tsc --noEmit, all 5 packages)
+        run: pnpm typecheck
+
+      - name: Unit tests (node:test)
+        run: pnpm test
+
+      # Build the WeChat bundle: exercises build-levels.mjs (compact encoder)
+      # and bundle.mjs (esbuild + subpackage emission). Skips H5 prod build
+      # — known OOM on `import.meta.glob` over 3548 JSON, see HANDOFF.md.
+      - name: Build wxgame (main + 12 subpackages)
+        run: pnpm build:wxgame
+
+      # Smoke-test the solver on a 200-level sample. Greedy escape-first
+      # solves the full corpus in our local runs; if a regression makes
+      # the core model unsolvable, this catches it under 30s.
+      - name: Solver sample (200 levels)
+        run: pnpm --filter @ea/tools solve:all -- --limit=200

@@ -13,4 +13,5 @@ dist/
 # 不会被任何 `git add` 不小心带入仓库。
 /*
 !/.gitignore
+!/.github
 !/app

@@ -16,6 +16,12 @@ import type { ArrowData, LevelData, Vec2 } from "./types.js";
  * Collision: a step is blocked when the new head cell is on-grid AND
  * currently occupied by another non-escaped arrow's body cell. Off-grid
  * head positions are fine — the head pokes out of the puzzle shape.
+ * The head ALSO freely crosses "void" cells (in-grid cells inside the
+ * bounding rectangle that aren't in any arrow's path); this is verified
+ * empirically by `packages/tools/src/analyze-head-void.mjs` — out of a
+ * 500-level sample, 497 of the winning plans relied on a head crossing
+ * a void cell, so tightening this rule would break virtually every
+ * puzzle in the corpus.
  *
  * Escape: the arrow leaves the board once its tail cell is off-grid (which
  * implies every other segment, all further along facing, is also off-grid).
@@ -125,14 +131,8 @@ export function bodyCells(arrow: ArrowState): Vec2[] {
 }
 
 /** In-grid subset of the current body. */
-export function bodyCellsInGrid(
-  arrow: ArrowState,
-  W: number,
-  H: number,
-): Vec2[] {
-  return bodyCells(arrow).filter(
-    (c) => c.x >= 0 && c.x < W && c.y >= 0 && c.y < H,
-  );
+export function bodyCellsInGrid(arrow: ArrowState, W: number, H: number): Vec2[] {
+  return bodyCells(arrow).filter((c) => c.x >= 0 && c.x < W && c.y >= 0 && c.y < H);
 }
 
 export function findArrowAt(state: GameState, cell: Vec2): ArrowState | null {

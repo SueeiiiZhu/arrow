@@ -6,13 +6,7 @@
 export type LineCap = "butt" | "round" | "square";
 export type LineJoin = "miter" | "round" | "bevel";
 export type TextAlign = "start" | "end" | "left" | "right" | "center";
-export type TextBaseline =
-  | "top"
-  | "hanging"
-  | "middle"
-  | "alphabetic"
-  | "ideographic"
-  | "bottom";
+export type TextBaseline = "top" | "hanging" | "middle" | "alphabetic" | "ideographic" | "bottom";
 
 export interface DrawCtx {
   canvas: { width: number; height: number };

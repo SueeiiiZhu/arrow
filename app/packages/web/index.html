@@ -13,15 +13,36 @@
       header select, header input { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; padding: 4px 8px; border-radius: 4px; }
       header button { background: #3b82f6; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; }
       header button:hover { background: #2563eb; }
+      #picker-btn { background: #334155; }
+      #picker-btn:hover { background: #475569; }
       main { flex: 1; position: relative; overflow: hidden; }
       canvas { display: block; width: 100%; height: 100%; touch-action: none; }
       .info { position: absolute; bottom: 8px; left: 8px; font-size: 12px; opacity: 0.6; }
+
+      #picker-panel { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; background: rgba(15,23,42,0.95); }
+      #picker-panel[hidden] { display: none; }
+      .picker-head { display: flex; gap: 8px; padding: 12px; background: #1e293b; align-items: center; border-bottom: 1px solid #334155; }
+      #picker-search { flex: 1; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; padding: 8px 12px; border-radius: 4px; font-size: 14px; }
+      #picker-count { font-size: 12px; opacity: 0.7; white-space: nowrap; }
+      #picker-close { background: #ef4444; color: white; border: none; width: 32px; height: 32px; border-radius: 4px; cursor: pointer; font-size: 18px; line-height: 1; }
+      #picker-tags { padding: 8px 12px; display: flex; gap: 6px; flex-wrap: wrap; background: #1e293b; border-bottom: 1px solid #334155; }
+      .picker-tag { padding: 4px 10px; border-radius: 12px; font-size: 12px; background: #334155; color: #e2e8f0; cursor: pointer; user-select: none; }
+      .picker-tag.active { background: #3b82f6; }
+      #picker-list { flex: 1; overflow-y: auto; background: #0f172a; }
+      .picker-row { padding: 10px 14px; border-bottom: 1px solid #1e293b; cursor: pointer; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+      .picker-row:hover { background: #1e293b; }
+      .picker-row.current { background: #1e3a5f; }
+      .picker-row .picker-idx { color: #64748b; min-width: 60px; font-variant-numeric: tabular-nums; font-size: 11px; }
+      .picker-row .picker-name { flex: 1; }
+      .picker-row .picker-meta { font-size: 11px; opacity: 0.6; white-space: nowrap; }
+      .picker-row .picker-done { color: #22c55e; min-width: 14px; }
+      .picker-more { padding: 14px; text-align: center; font-size: 12px; opacity: 0.7; }
     </style>
   </head>
   <body>
     <div id="app">
       <header>
-        <label>关卡 <select id="level-select"></select></label>
+        <button id="picker-btn">关卡: <span id="picker-label">—</span></button>
         <label><input type="checkbox" id="show-paths" /> 显示路径</label>
         <button id="prev-btn">‹ 上一关</button>
         <button id="next-btn">下一关 ›</button>
@@ -33,6 +54,15 @@
         <canvas id="board"></canvas>
         <div class="info">点箭头拉出，被挡住会停下。规则为反编译推断版。</div>
       </main>
+    </div>
+    <div id="picker-panel" hidden>
+      <div class="picker-head">
+        <input id="picker-search" type="search" placeholder="搜索：名字 / 标签 / 尺寸 …" />
+        <span id="picker-count"></span>
+        <button id="picker-close" aria-label="关闭">×</button>
+      </div>
+      <div id="picker-tags"></div>
+      <div id="picker-list"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

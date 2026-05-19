@@ -1,14 +1,28 @@
 import {
   createGame,
   findArrowAt,
+  type GameState,
   loadLevel,
+  loadProgress,
+  type Progress,
+  type ProgressStorage,
+  type RawLevelFile,
   resetGame,
+  saveProgress,
   tryPull,
   validateLevel,
-  type GameState,
-  type RawLevelFile,
 } from "@ea/core";
-import { drawGame, fitView, pickCell } from "@ea/renderer";
+import {
+  type AudioContextLike,
+  drawGame,
+  drawWinOverlay,
+  fitView,
+  hitTestOverlay,
+  makeSynth,
+  type OverlayHitbox,
+  pickCell,
+  type Synth,
+} from "@ea/renderer";
 
 // --- animation state ---------------------------------------------------------
 
@@ -31,7 +45,7 @@ const shakes = new Map<number, Shake>();
 let rafId = 0;
 
 function easeOutCubic(u: number): number {
-  return 1 - Math.pow(1 - u, 3);
+  return 1 - (1 - u) ** 3;
 }
 
 function evalTween(tw: Tween, now: number): number {
@@ -39,12 +53,7 @@ function evalTween(tw: Tween, now: number): number {
   return tw.from + (tw.to - tw.from) * easeOutCubic(u);
 }
 
-function startTween(
-  id: number,
-  before: number,
-  after: number,
-  escapedAtEnd: boolean,
-): void {
+function startTween(id: number, before: number, after: number, escapedAtEnd: boolean): void {
   const now = performance.now();
   const existing = tweens.get(id);
   const fromNow = existing ? evalTween(existing, now) : before;
@@ -64,11 +73,7 @@ function startShake(id: number, facing: { x: number; y: number }): void {
   ensureRAF();
 }
 
-function evalShake(
-  sh: Shake,
-  now: number,
-  cell: number,
-): { dx: number; dy: number } | null {
+function evalShake(sh: Shake, now: number, cell: number): { dx: number; dy: number } | null {
   const u = (now - sh.start) / sh.dur;
   if (u >= 1) return null;
   const amp = cell * 0.22 * (1 - u);
@@ -81,7 +86,7 @@ function ensureRAF(): void {
   const step = (): void => {
     rafId = 0;
     render();
-    if (tweens.size > 0 || shakes.size > 0) {
+    if (tweens.size > 0 || shakes.size > 0 || isWinAnimating()) {
       rafId = requestAnimationFrame(step);
     }
   };
@@ -92,31 +97,103 @@ function isAnimating(): boolean {
   return tweens.size > 0;
 }
 
+function isWinAnimating(): boolean {
+  return winStart != null && performance.now() - winStart < 700;
+}
+
 function clearAnimations(): void {
   tweens.clear();
   shakes.clear();
 }
 
-// Vite glob: every neutral level JSON bundled at build time.
-const levelModules = import.meta.glob<RawLevelFile>(
-  "../../../levels_data/*.json",
-  { eager: true, import: "default" },
-);
+// --- audio synthesis ---------------------------------------------------------
+
+const audioCtx: AudioContextLike | null = (() => {
+  try {
+    const Ctor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return null;
+    return new Ctor() as unknown as AudioContextLike;
+  } catch {
+    return null;
+  }
+})();
+const synth: Synth = makeSynth(audioCtx);
+
+// --- win overlay state -------------------------------------------------------
+
+let winStart: number | null = null;
+let winHitbox: OverlayHitbox | null = null;
+
+// --- level entries ----------------------------------------------------------
+
+const levelModules = import.meta.glob<RawLevelFile>("../../../levels_data/*.json", {
+  eager: true,
+  import: "default",
+});
 
 interface Entry {
   key: string;
   name: string;
+  size?: string;
+  count?: number;
+  tags: string[];
   raw: RawLevelFile;
+}
+
+function parseEntry(key: string, raw: RawLevelFile): Entry {
+  const name = key.replace(/^\d+__/, "").replace(/\.json$/, "");
+  let size: string | undefined;
+  let count: number | undefined;
+  let tags: string[] = [];
+  for (const m of name.matchAll(/\[([^\]]+)\]/g)) {
+    const g = m[1]!;
+    if (/^\d+x\d+$/.test(g)) size = g;
+    else if (/^\d+$/.test(g)) count = Number(g);
+    else if (/[A-Za-z]/.test(g)) tags = g.split(",").map((s) => s.trim());
+  }
+  return { key, name, size, count, tags, raw };
 }
 
 const entries: Entry[] = Object.entries(levelModules)
   .map(([path, raw]) => {
     const file = path.split("/").pop()!;
-    return { key: file, name: file.replace(/^\d+__/, "").replace(/\.json$/, ""), raw };
+    return parseEntry(file, raw);
   })
   .sort((a, b) => a.key.localeCompare(b.key));
 
-const select = document.getElementById("level-select") as HTMLSelectElement;
+const allTags = [...new Set(entries.flatMap((e) => e.tags))].sort();
+
+// --- persistence ------------------------------------------------------------
+
+const STORAGE_KEY = "escape_arrows_progress";
+
+const storage: ProgressStorage = {
+  read: () => {
+    try {
+      return localStorage.getItem(STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  write: (v) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, v);
+    } catch {
+      // quota / privacy mode — just lose progress
+    }
+  },
+};
+
+const progress: Progress = loadProgress(storage);
+
+function persist(): void {
+  saveProgress(storage, progress);
+}
+
+// --- DOM refs ---------------------------------------------------------------
+
 const showPathsBox = document.getElementById("show-paths") as HTMLInputElement;
 const meta = document.getElementById("meta") as HTMLSpanElement;
 const status = document.getElementById("status") as HTMLSpanElement;
@@ -126,14 +203,17 @@ const resetBtn = document.getElementById("reset-btn") as HTMLButtonElement;
 const canvas = document.getElementById("board") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 
-for (const e of entries) {
-  const opt = document.createElement("option");
-  opt.value = e.key;
-  opt.textContent = e.name;
-  select.appendChild(opt);
-}
+const pickerBtn = document.getElementById("picker-btn") as HTMLButtonElement;
+const pickerLabel = document.getElementById("picker-label") as HTMLSpanElement;
+const pickerPanel = document.getElementById("picker-panel") as HTMLDivElement;
+const pickerSearch = document.getElementById("picker-search") as HTMLInputElement;
+const pickerCount = document.getElementById("picker-count") as HTMLSpanElement;
+const pickerClose = document.getElementById("picker-close") as HTMLButtonElement;
+const pickerTags = document.getElementById("picker-tags") as HTMLDivElement;
+const pickerList = document.getElementById("picker-list") as HTMLDivElement;
 
 let game: GameState | null = null;
+let currentKey: string | null = null;
 
 function dpr(): number {
   return Math.min(window.devicePixelRatio || 1, 2);
@@ -185,6 +265,13 @@ function render(): void {
     shakeOffsets,
     drawEscapedIds,
   });
+
+  if (game.status === "won" && winStart != null) {
+    const phase = (performance.now() - winStart) / 1000;
+    winHitbox = drawWinOverlay(ctx as any, w, h, phase);
+  } else {
+    winHitbox = null;
+  }
 }
 
 function updateStatus(): void {
@@ -202,6 +289,12 @@ function updateStatus(): void {
   }
 }
 
+function updatePickerLabel(): void {
+  const entry = entries.find((e) => e.key === currentKey);
+  const idx = entry ? entries.indexOf(entry) + 1 : 0;
+  pickerLabel.textContent = entry ? `${idx}/${entries.length}  ${entry.name}` : "—";
+}
+
 function selectLevel(key: string): void {
   const entry = entries.find((e) => e.key === key);
   if (!entry) return;
@@ -209,28 +302,44 @@ function selectLevel(key: string): void {
   const err = validateLevel(level);
   meta.textContent = err
     ? `[校验失败] ${err}`
-    : `${level.width}×${level.height}  ${level.arrows.length} 箭头  (${entries.indexOf(entry) + 1}/${entries.length})`;
+    : `${level.width}×${level.height}  ${level.arrows.length} 箭头`;
   game = createGame(level);
   clearAnimations();
-  select.value = key;
+  winStart = null;
+  currentKey = key;
+  progress.lastKey = key;
+  persist();
+  updatePickerLabel();
   updateStatus();
   render();
 }
 
+function gotoNextLevel(): void {
+  const i = entries.findIndex((e) => e.key === currentKey);
+  if (i >= 0 && i < entries.length - 1) selectLevel(entries[i + 1]!.key);
+}
+
 function handlePointer(clientX: number, clientY: number): void {
-  if (!game || game.status === "won" || isAnimating()) return;
+  if (!game) return;
   const rect = canvas.getBoundingClientRect();
   const px = clientX - rect.left;
   const py = clientY - rect.top;
+
+  // Win-overlay button takes priority while the level is won.
+  if (game.status === "won" && winHitbox) {
+    const hit = hitTestOverlay(winHitbox, px, py);
+    if (hit === "next") {
+      synth.click();
+      gotoNextLevel();
+    }
+    return;
+  }
+
+  if (isAnimating()) return;
   const { w, h } = viewSize();
   const t = fitView(game.level, w, h);
   const cell = pickCell(px, py, t);
-  if (
-    cell.x < 0 ||
-    cell.y < 0 ||
-    cell.x >= game.level.width ||
-    cell.y >= game.level.height
-  ) {
+  if (cell.x < 0 || cell.y < 0 || cell.x >= game.level.width || cell.y >= game.level.height) {
     return;
   }
   const arrow = findArrowAt(game, cell);
@@ -240,31 +349,144 @@ function handlePointer(clientX: number, clientY: number): void {
   const after = arrow.progress;
   if (result.steps > 0) {
     startTween(arrow.id, before, after, result.escaped);
+    if (result.escaped) synth.escape();
+    else synth.whoosh(result.steps);
   } else {
     startShake(arrow.id, arrow.data.facing);
+    synth.thud();
+  }
+  if (result.won && currentKey) {
+    progress.completed.add(currentKey);
+    persist();
+    winStart = performance.now();
+    synth.win();
+    ensureRAF();
   }
   updateStatus();
   render();
 }
 
-select.addEventListener("change", () => selectLevel(select.value));
+// --- picker -----------------------------------------------------------------
+
+const MAX_VISIBLE = 500;
+const activeTags = new Set<string>();
+
+function buildTagChips(): void {
+  pickerTags.innerHTML = "";
+  for (const tag of allTags) {
+    const el = document.createElement("span");
+    el.className = "picker-tag";
+    el.textContent = tag;
+    el.addEventListener("click", () => {
+      if (activeTags.has(tag)) {
+        activeTags.delete(tag);
+        el.classList.remove("active");
+      } else {
+        activeTags.add(tag);
+        el.classList.add("active");
+      }
+      refreshList();
+    });
+    pickerTags.appendChild(el);
+  }
+}
+
+function matchEntry(e: Entry, search: string): boolean {
+  if (search) {
+    const hay = e.key.toLowerCase();
+    if (!hay.includes(search)) return false;
+  }
+  if (activeTags.size > 0) {
+    for (const t of activeTags) if (!e.tags.includes(t)) return false;
+  }
+  return true;
+}
+
+function refreshList(): void {
+  const search = pickerSearch.value.trim().toLowerCase();
+  const matches = entries.filter((e) => matchEntry(e, search));
+  pickerCount.textContent = `${matches.length}/${entries.length}`;
+  pickerList.innerHTML = "";
+  const visible = matches.slice(0, MAX_VISIBLE);
+  for (const e of visible) {
+    const idx = entries.indexOf(e);
+    const row = document.createElement("div");
+    row.className = "picker-row" + (e.key === currentKey ? " current" : "");
+    const idxEl = document.createElement("span");
+    idxEl.className = "picker-idx";
+    idxEl.textContent = `#${idx + 1}`;
+    const nameEl = document.createElement("span");
+    nameEl.className = "picker-name";
+    nameEl.textContent = e.name;
+    const metaEl = document.createElement("span");
+    metaEl.className = "picker-meta";
+    const parts: string[] = [];
+    if (e.size) parts.push(e.size);
+    if (e.count != null) parts.push(`${e.count} 箭`);
+    if (e.tags.length > 0) parts.push(e.tags.join(", "));
+    metaEl.textContent = parts.join("  ·  ");
+    const doneEl = document.createElement("span");
+    doneEl.className = "picker-done";
+    doneEl.textContent = progress.completed.has(e.key) ? "✓" : "";
+    row.append(idxEl, nameEl, metaEl, doneEl);
+    row.addEventListener("click", () => {
+      closePicker();
+      selectLevel(e.key);
+    });
+    pickerList.appendChild(row);
+  }
+  if (matches.length > MAX_VISIBLE) {
+    const more = document.createElement("div");
+    more.className = "picker-more";
+    more.textContent = `还有 ${matches.length - MAX_VISIBLE} 项，缩小搜索范围查看全部`;
+    pickerList.appendChild(more);
+  }
+}
+
+function openPicker(): void {
+  pickerPanel.hidden = false;
+  refreshList();
+  pickerSearch.focus();
+  pickerSearch.select();
+  // Scroll to currently selected entry if visible
+  const cur = pickerList.querySelector(".picker-row.current") as HTMLElement | null;
+  if (cur) cur.scrollIntoView({ block: "center" });
+}
+
+function closePicker(): void {
+  pickerPanel.hidden = true;
+}
+
+// --- wiring -----------------------------------------------------------------
+
 showPathsBox.addEventListener("change", render);
 window.addEventListener("resize", resize);
 
 prevBtn.addEventListener("click", () => {
-  const i = entries.findIndex((e) => e.key === select.value);
+  const i = entries.findIndex((e) => e.key === currentKey);
   if (i > 0) selectLevel(entries[i - 1]!.key);
 });
 nextBtn.addEventListener("click", () => {
-  const i = entries.findIndex((e) => e.key === select.value);
+  const i = entries.findIndex((e) => e.key === currentKey);
   if (i >= 0 && i < entries.length - 1) selectLevel(entries[i + 1]!.key);
 });
 resetBtn.addEventListener("click", () => {
   if (!game) return;
   resetGame(game);
   clearAnimations();
+  winStart = null;
   updateStatus();
   render();
+});
+
+pickerBtn.addEventListener("click", openPicker);
+pickerClose.addEventListener("click", closePicker);
+pickerSearch.addEventListener("input", refreshList);
+pickerSearch.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closePicker();
+});
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !pickerPanel.hidden) closePicker();
 });
 
 canvas.addEventListener("click", (ev) => handlePointer(ev.clientX, ev.clientY));
@@ -279,5 +501,13 @@ canvas.addEventListener(
   { passive: false },
 );
 
-if (entries.length > 0) selectLevel(entries[0]!.key);
+buildTagChips();
+
+if (entries.length > 0) {
+  const restored =
+    progress.lastKey && entries.some((e) => e.key === progress.lastKey)
+      ? progress.lastKey
+      : entries[0]!.key;
+  selectLevel(restored);
+}
 resize();

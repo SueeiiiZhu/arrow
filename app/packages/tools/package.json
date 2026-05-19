@@ -1,0 +1,16 @@
+{
+  "name": "@ea/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild:core": "pnpm -F @ea/core build",
+    "solve:big": "pnpm prebuild:core && node src/solve-big.mjs",
+    "solve:all": "pnpm prebuild:core && node src/solve-all.mjs",
+    "analyze:void": "pnpm prebuild:core && node src/analyze-head-void.mjs",
+    "typecheck": "echo 'no ts in tools package'"
+  },
+  "dependencies": {
+    "@ea/core": "workspace:*"
+  }
+}

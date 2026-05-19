@@ -1,6 +1,6 @@
 import { bodyCellsAt, type GameState, type LevelData, type Vec2 } from "@ea/core";
-import { colorFor } from "./palette.js";
 import type { DrawCtx } from "./canvas-ctx.js";
+import { colorFor } from "./palette.js";
 
 export interface ViewTransform {
   /** size of a single grid cell in pixels */
@@ -18,10 +18,7 @@ export function fitView(
 ): ViewTransform {
   const usableW = canvasW - margin * 2;
   const usableH = canvasH - margin * 2;
-  const cell = Math.max(
-    4,
-    Math.floor(Math.min(usableW / level.width, usableH / level.height)),
-  );
+  const cell = Math.max(4, Math.floor(Math.min(usableW / level.width, usableH / level.height)));
   const boardW = cell * level.width;
   const boardH = cell * level.height;
   return {
@@ -39,11 +36,7 @@ export function cellCenter(v: Vec2, t: ViewTransform): { cx: number; cy: number 
 }
 
 /** Inverse of cellCenter — map a canvas point back to a grid cell. */
-export function pickCell(
-  px: number,
-  py: number,
-  t: ViewTransform,
-): Vec2 {
+export function pickCell(px: number, py: number, t: ViewTransform): Vec2 {
   return {
     x: Math.floor((px - t.ox) / t.cell),
     y: Math.floor((py - t.oy) / t.cell),
@@ -111,7 +104,7 @@ export function drawGame(
 
   for (let i = 0; i < game.arrows.length; i++) {
     const arrow = game.arrows[i]!;
-    if (arrow.escaped && !(o.drawEscapedIds && o.drawEscapedIds.has(arrow.id))) {
+    if (arrow.escaped && !o.drawEscapedIds?.has(arrow.id)) {
       continue;
     }
     const color = colorFor(arrow.id);
@@ -142,12 +135,7 @@ function paintBackground(ctx: DrawCtx, o: DrawOptions): void {
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 }
 
-function paintLevelMask(
-  ctx: DrawCtx,
-  level: LevelData,
-  t: ViewTransform,
-  o: DrawOptions,
-): void {
+function paintLevelMask(ctx: DrawCtx, level: LevelData, t: ViewTransform, o: DrawOptions): void {
   const seen = new Set<string>();
   ctx.fillStyle = o.maskFill;
   for (const arrow of level.arrows) {
@@ -160,12 +148,7 @@ function paintLevelMask(
   }
 }
 
-function paintGrid(
-  ctx: DrawCtx,
-  level: LevelData,
-  t: ViewTransform,
-  o: DrawOptions,
-): void {
+function paintGrid(ctx: DrawCtx, level: LevelData, t: ViewTransform, o: DrawOptions): void {
   ctx.strokeStyle = o.gridLine;
   ctx.lineWidth = o.gridLineWidth;
   ctx.beginPath();
@@ -233,12 +216,7 @@ function drawBody(
 }
 
 /** Rounded circle cap drawn at the tail cell (matches ArrowEnd.png). */
-function drawTailCap(
-  ctx: DrawCtx,
-  pos: Vec2,
-  t: ViewTransform,
-  color: string,
-): void {
+function drawTailCap(ctx: DrawCtx, pos: Vec2, t: ViewTransform, color: string): void {
   const { cx, cy } = cellCenter(pos, t);
   const r = t.cell * 0.36;
   ctx.fillStyle = color;
@@ -262,7 +240,7 @@ export function drawArrowGlyph(
   const angle = Math.atan2(facing.y, facing.x);
   // Triangle dimensions in local frame (forward = +x).
   const fwd = t.cell * 0.58; // tip distance from cell center
-  const back = t.cell * 0.30; // base distance behind cell center (overlaps body)
+  const back = t.cell * 0.3; // base distance behind cell center (overlaps body)
   const half = t.cell * 0.48; // half base width
 
   ctx.save();
