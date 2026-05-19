@@ -25,7 +25,10 @@
 - Lint / formatter + CI. Biome 2.4 is the single tool (format + lint + import organize); config in `biome.json` keeps `noNonNullAssertion`, `noExplicitAny`, and `noAssignInExpressions` disabled to match existing code. Run `pnpm lint` (check-only) or `pnpm lint:fix` (autofix). GitHub Actions in `../.github/workflows/ci.yml`: install → lint → typecheck → test → `build:wxgame` → 200-level solver sample on every push / PR to `main`. `build:web` is skipped in CI (preexisting `import.meta.glob` OOM on 3548 JSON; need a chunked loader before re-enabling).
 - `.gitignore`: app/ now has its own (`node_modules/`, all `dist/`, `*.tsbuildinfo`, `packages/wxgame/src/levels.generated.ts`, `packages/tools/generated/`, IDE / cache). Parent `../.gitignore` was the original gatekeeper (only `/app` is whitelisted, plus newly added `!/.github`); the generated `levels.generated.ts` was previously tracked by mistake and has been removed from the index.
 - Corpus statistics dump (`packages/tools/src/stat-corpus.mjs`, `pnpm --filter @ea/tools stat:corpus`): grid sizes, arrow counts, snake lengths, corner counts, fill density, facing distribution, tag histogram across all 3548 levels. Key findings: median 31×38 grid, 81 arrows, 96% fill density, p50 snake length 7, only 9.9% of heads on the border. Drove the design of the procedural generator below.
-- **Procedural level generator** (PoC): `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate`. Random-walk path partition + facing assignment + greedy/DFS-validated filter. Yields 5/5 within ~75–190 attempts up to 20×20; **30×30 fails** (perimeter too small for the immediate-exit heuristic). Generated output goes to `packages/tools/generated/` which is gitignored — see `packages/tools/README.md` for usage, flags, algorithm, and known limits. **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus).
+- **Procedural level generator** — two algorithms, both written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
+    - `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate` — path-partition + greedy/DFS filter. Yields up to 20×20, fails at 30×30. Kept around for comparison.
+    - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on.
+    - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus).
 
 ### Entry points cheat sheet
 
@@ -42,7 +45,7 @@
 | Compact wxgame level encoder / chunker | `packages/wxgame/scripts/_encode.mjs` |
 | Compact → RawLevelFile decoder | `packages/wxgame/src/decode.ts` |
 | Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
-| Procedural level generator | `packages/tools/src/generate.mjs` (output to gitignored `packages/tools/generated/`) |
+| Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended). Output to gitignored `packages/tools/generated/`. |
 | Biome config (format + lint) | `biome.json` |
 | CI workflow | `../.github/workflows/ci.yml` |
 
@@ -68,7 +71,11 @@
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
 
-- **生成器下一步：proper reverse generation**。当前 PoC 是 path-partition + 解算器过滤，30×30 以上几乎拒收（边界周长不够给所有路径找朝外的头）。要逼近语料中位数 31×38，需要换成「逆向构造」：先选定逃出顺序，逐个放箭头，让它的 facing 在前序逃出后恰好通畅。可证可解性，不再依赖 deadlock 过滤。`packages/tools/README.md` 有具体描述。
+- **生成器下一步：把生成的关卡接到 picker / 测试关 / 自动化质量评估上**。reverse 构造已经能稳定吐出语料中位数尺寸（31×38）甚至 50×50 的可解关卡（详见 `packages/tools/README.md` 的 yield 表），但目前 `packages/tools/generated/` 不进运行时—当前只验证 `tryPull` 能跑通，没人玩过这些关。下一步候选：
+    1. 自动质量评估：跑大批量样本，按 greedy moves/arrows 比、bottleneck 箭头数、首关可解箭头比例分桶画分布，对比 `levels_data/` 的同尺寸样本看「分布像不像真关」。
+    2. 离线人工试玩：从 `packages/tools/generated/` 拷一两关进单独的 `dev-only` 入口（绝不进 `levels_data/`），用 H5 dev server 实际玩，做主观打分。
+    3. 等稳定后再决定要不要接入正式关卡流。在这之前生成的关卡保持在 gitignored 目录里。
+- **生成器：`min-sequencing` 之外的更精细 "fun" 指标**。`packages/tools/README.md` §"What about quality / 'fun'?"列了几个候选（greedy heuristic gap / bottleneck arrow / path-length distribution），都没接。
 
 ---
 
@@ -98,7 +105,8 @@ pnpm --filter @ea/tools solve:big            # solve OG_LevelBig7 to verify the 
 pnpm --filter @ea/tools solve:all -- --limit=all   # full-corpus solvability sweep (slow on 3548 levels)
 pnpm --filter @ea/tools analyze:void         # LAX vs STRICT head-extension simulation
 pnpm --filter @ea/tools stat:corpus          # 3548-level distributional statistics
-pnpm --filter @ea/tools generate -- --w=10 --h=10 --count=5 --seed=42   # procedural levels → stdout (add --out to write files)
+pnpm --filter @ea/tools generate -- --w=10 --h=10 --count=5 --seed=42   # path-partition generator → stdout (add --out to write files)
+pnpm --filter @ea/tools generate:reverse -- --w=31 --h=38 --count=5 --seed=1   # reverse-construction generator (recommended; scales to corpus-median)
 ```
 
 WeChat DevTools: *Mini Game → Import Project → select `app/packages/wxgame/dist/wxgame/`*.

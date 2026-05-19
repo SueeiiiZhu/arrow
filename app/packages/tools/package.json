@@ -10,6 +10,7 @@
     "analyze:void": "pnpm prebuild:core && node src/analyze-head-void.mjs",
     "stat:corpus": "node src/stat-corpus.mjs",
     "generate": "pnpm prebuild:core && node src/generate.mjs",
+    "generate:reverse": "pnpm prebuild:core && node src/generate-reverse.mjs",
     "typecheck": "echo 'no ts in tools package'"
   },
   "dependencies": {
