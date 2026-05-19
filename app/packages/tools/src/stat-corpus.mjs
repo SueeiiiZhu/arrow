@@ -4,7 +4,7 @@
 // generator has concrete targets to match (grid sizes, arrow counts, snake
 // lengths, corner density, etc.). Pure read; no @ea/core import needed.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,7 +16,7 @@ const LEVELS_DIR = resolve(__dirname, "../../../levels_data");
 // Examples:
 //   00190__OG_LevelBig7.json
 //   00177__07-08_[19x27]_[54]_[Snake, Country].json
-const RE_TAGS = /\[([^\[\]]+)\]\.json$/;
+const RE_TAGS = /\[([^[\]]+)\]\.json$/;
 const RE_OG = /__OG_/;
 
 function parseTags(fname) {
@@ -216,8 +216,7 @@ summary("path length (snake length)", pathLens);
 summary("corners per arrow", corners);
 console.log(
   `  head starts on border:         ${(
-    (headOnBorder.filter((b) => b).length / headOnBorder.length) *
-    100
+    (headOnBorder.filter((b) => b).length / headOnBorder.length) * 100
   ).toFixed(1)}%  (${headOnBorder.filter((b) => b).length}/${headOnBorder.length})`,
 );
 
@@ -228,15 +227,9 @@ for (const [k, v] of Object.entries(facingDist)) {
 }
 
 // Histograms
-printHist(
-  "Grid cell-count distribution (W*H)",
-  histogram(cellCounts, [100, 400, 900, 1600, 2500]),
-);
+printHist("Grid cell-count distribution (W*H)", histogram(cellCounts, [100, 400, 900, 1600, 2500]));
 printHist("Arrows / level distribution", histogram(arrowCounts, [10, 25, 50, 100, 200]));
-printHist(
-  "Path-length distribution (per arrow)",
-  histogram(pathLens, [2, 5, 10, 20, 50]),
-);
+printHist("Path-length distribution (per arrow)", histogram(pathLens, [2, 5, 10, 20, 50]));
 printHist("Corners-per-arrow distribution", histogram(corners, [0, 1, 3, 6, 12]));
 printHist(
   "Fill density distribution (%)",
@@ -249,22 +242,33 @@ printHist(
 console.log("\n=== Tag frequency (single-tag counts) ===");
 const sortedTags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1]);
 for (const [t, c] of sortedTags) {
-  console.log(`  ${t.padEnd(20)}  ${String(c).padStart(5)}  (${((c / files.length) * 100).toFixed(1)}%)`);
+  console.log(
+    `  ${t.padEnd(20)}  ${String(c).padStart(5)}  (${((c / files.length) * 100).toFixed(1)}%)`,
+  );
 }
 
 console.log("\n=== Tag-combo frequency (top 15) ===");
 const sortedCombos = [...tagCombos.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 for (const [c, n] of sortedCombos) {
-  console.log(`  ${c.padEnd(40)}  ${String(n).padStart(5)}  (${((n / files.length) * 100).toFixed(1)}%)`);
+  console.log(
+    `  ${c.padEnd(40)}  ${String(n).padStart(5)}  (${((n / files.length) * 100).toFixed(1)}%)`,
+  );
 }
 
 console.log("\n=== Quick takeaways for generator design ===");
 const medianCells = pct(cellCounts, 50);
 const medianArrows = pct(arrowCounts, 50);
-const medianDens = pct(densities.map((d) => Math.round(d * 100)), 50);
+const medianDens = pct(
+  densities.map((d) => Math.round(d * 100)),
+  50,
+);
 const medianPath = pct(pathLens, 50);
 const medianCorners = pct(corners, 50);
-console.log(`  - Median level: ${pct(widths, 50)} × ${pct(heights, 50)} grid, ${medianCells} cells, ${medianArrows} arrows, ${medianDens}% filled`);
+console.log(
+  `  - Median level: ${pct(widths, 50)} × ${pct(heights, 50)} grid, ${medianCells} cells, ${medianArrows} arrows, ${medianDens}% filled`,
+);
 console.log(`  - Median arrow: ${medianPath} cells long with ${medianCorners} corner(s)`);
-console.log(`  - Heads start on the grid border ${((headOnBorder.filter((b) => b).length / headOnBorder.length) * 100).toFixed(0)}% of the time`);
+console.log(
+  `  - Heads start on the grid border ${((headOnBorder.filter((b) => b).length / headOnBorder.length) * 100).toFixed(0)}% of the time`,
+);
 console.log(`  - Top tag: ${sortedTags[0]?.[0] ?? "(none)"} (${sortedTags[0]?.[1] ?? 0} levels)`);

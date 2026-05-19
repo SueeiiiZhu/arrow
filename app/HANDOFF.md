@@ -23,7 +23,9 @@
 - Win screen / completion UI (`packages/renderer/src/overlay.ts`): full-screen Canvas overlay — backdrop fade-in, eight-star burst from the title position, "通关！" title, and a centered "下一关 ▶" button that fades in around 350ms. Both H5 and wxgame use the same `drawWinOverlay` + `hitTestOverlay` pair.
 - Sound effects (`packages/renderer/src/synth.ts`): pure Web Audio synthesis, no sampled audio. Five cues — `click` (high-passed noise burst, ~40ms), `whoosh` (triangle wave 720→220Hz, dur scales with pull length), `thud` (sine 180→70Hz, 150ms), `escape` (sine 320→1200Hz, 200ms), `win` (C5-E5-G5-C6 triangle arpeggio, 0.4s tail). H5 wires `new AudioContext()`; wxgame wires `wx.createWebAudioContext()`. All play methods swallow exceptions so older base libraries / locked-down browsers fail silently.
 - Lint / formatter + CI. Biome 2.4 is the single tool (format + lint + import organize); config in `biome.json` keeps `noNonNullAssertion`, `noExplicitAny`, and `noAssignInExpressions` disabled to match existing code. Run `pnpm lint` (check-only) or `pnpm lint:fix` (autofix). GitHub Actions in `../.github/workflows/ci.yml`: install → lint → typecheck → test → `build:wxgame` → 200-level solver sample on every push / PR to `main`. `build:web` is skipped in CI (preexisting `import.meta.glob` OOM on 3548 JSON; need a chunked loader before re-enabling).
-- `.gitignore`: app/ now has its own (`node_modules/`, all `dist/`, `*.tsbuildinfo`, `packages/wxgame/src/levels.generated.ts`, IDE / cache). Parent `../.gitignore` was the original gatekeeper (only `/app` is whitelisted, plus newly added `!/.github`); the generated `levels.generated.ts` was previously tracked by mistake and has been removed from the index.
+- `.gitignore`: app/ now has its own (`node_modules/`, all `dist/`, `*.tsbuildinfo`, `packages/wxgame/src/levels.generated.ts`, `packages/tools/generated/`, IDE / cache). Parent `../.gitignore` was the original gatekeeper (only `/app` is whitelisted, plus newly added `!/.github`); the generated `levels.generated.ts` was previously tracked by mistake and has been removed from the index.
+- Corpus statistics dump (`packages/tools/src/stat-corpus.mjs`, `pnpm --filter @ea/tools stat:corpus`): grid sizes, arrow counts, snake lengths, corner counts, fill density, facing distribution, tag histogram across all 3548 levels. Key findings: median 31×38 grid, 81 arrows, 96% fill density, p50 snake length 7, only 9.9% of heads on the border. Drove the design of the procedural generator below.
+- **Procedural level generator** (PoC): `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate`. Random-walk path partition + facing assignment + greedy/DFS-validated filter. Yields 5/5 within ~75–190 attempts up to 20×20; **30×30 fails** (perimeter too small for the immediate-exit heuristic). Generated output goes to `packages/tools/generated/` which is gitignored — see `packages/tools/README.md` for usage, flags, algorithm, and known limits. **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus).
 
 ### Entry points cheat sheet
 
@@ -39,7 +41,8 @@
 | WeChat bundle script | `packages/wxgame/scripts/bundle.mjs` |
 | Compact wxgame level encoder / chunker | `packages/wxgame/scripts/_encode.mjs` |
 | Compact → RawLevelFile decoder | `packages/wxgame/src/decode.ts` |
-| Solver / corpus analysis scripts | `packages/tools/src/*.mjs` |
+| Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
+| Procedural level generator | `packages/tools/src/generate.mjs` (output to gitignored `packages/tools/generated/`) |
 | Biome config (format + lint) | `biome.json` |
 | CI workflow | `../.github/workflows/ci.yml` |
 
@@ -64,6 +67,8 @@
     3. 按 tag 分章节 —— 文件名带 `[Snake, Country, Aztec, Basic, Spaghetti]`，按 tag 重排成章节。picker UI 改动较多。
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
+
+- **生成器下一步：proper reverse generation**。当前 PoC 是 path-partition + 解算器过滤，30×30 以上几乎拒收（边界周长不够给所有路径找朝外的头）。要逼近语料中位数 31×38，需要换成「逆向构造」：先选定逃出顺序，逐个放箭头，让它的 facing 在前序逃出后恰好通畅。可证可解性，不再依赖 deadlock 过滤。`packages/tools/README.md` 有具体描述。
 
 ---
 
@@ -92,6 +97,8 @@ pnpm lint:fix                                # Biome with safe autofixes applied
 pnpm --filter @ea/tools solve:big            # solve OG_LevelBig7 to verify the model
 pnpm --filter @ea/tools solve:all -- --limit=all   # full-corpus solvability sweep (slow on 3548 levels)
 pnpm --filter @ea/tools analyze:void         # LAX vs STRICT head-extension simulation
+pnpm --filter @ea/tools stat:corpus          # 3548-level distributional statistics
+pnpm --filter @ea/tools generate -- --w=10 --h=10 --count=5 --seed=42   # procedural levels → stdout (add --out to write files)
 ```
 
 WeChat DevTools: *Mini Game → Import Project → select `app/packages/wxgame/dist/wxgame/`*.

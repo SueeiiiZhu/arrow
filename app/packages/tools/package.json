@@ -9,6 +9,7 @@
     "solve:all": "pnpm prebuild:core && node src/solve-all.mjs",
     "analyze:void": "pnpm prebuild:core && node src/analyze-head-void.mjs",
     "stat:corpus": "node src/stat-corpus.mjs",
+    "generate": "pnpm prebuild:core && node src/generate.mjs",
     "typecheck": "echo 'no ts in tools package'"
   },
   "dependencies": {
