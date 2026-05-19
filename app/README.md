@@ -2,7 +2,20 @@
 
 把 APK 反编译出来的关卡几何用 TypeScript + Canvas 重写，**不打包任何原始美术资源**（仅复用 `levels_data/` 里的关卡数据）。
 
-工作目录布局：
+## 关于关卡数据的法律边界
+
+仓库内的代码 / 渲染 / 音效都是从零写的；视觉风格用 Canvas 路径还原（详见 `packages/renderer/src/board.ts` 里的 `drawArrowGlyph` / `drawTailCap`），不依赖任何原 APK 的 PNG / 字体 / mp3 / ogg。**不要把这些原始资产加入 git** —— 仓库根的 `.gitignore` 用 allowlist 策略 (`/*` + `!/app` + `!/.github`) 主动排除掉了 `_extracted/`、`AndroidManifest.xml`、`classes*.dex` 等所有 APK 反编译副产物，**请勿绕过**。
+
+唯一**已在版本控制内**的"来自 APK 的内容"是 `levels_data/` 里 3548 个关卡 JSON —— 这是关卡几何坐标（不是美术资源），但仍然属于受著作权保护的「表达性内容」(protected expression)。当前仅作为个人 / 学习用途私有使用；**在任何形式的公开发布、上架商店、或商业化之前，必须重新评估** —— 可选路径包括：
+
+- 自创一批新关卡替换 `levels_data/`（推荐）
+- 或与原作者协商授权 / 联合发布
+- 或仅作为开源代码工具开放，移除 `levels_data/` 让使用者自带
+
+这条边界在 [`AGENTS.md`](./AGENTS.md) 红线 #1 / #2 里也有记录。
+
+## 仓库布局
+
 
 ```
 app/

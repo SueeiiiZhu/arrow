@@ -56,6 +56,15 @@
 2. **Re-enable H5 production build in CI**
     - `pnpm build:web` currently OOMs even at `NODE_OPTIONS=--max-old-space-size=8192` because `import.meta.glob` materializes all 3548 level JSONs at build time. Workaround: switch H5 to the same compact-encoded subpackage approach used by wxgame (`packages/wxgame/src/decode.ts` + `_encode.mjs` are already shared-ready). Dev server is unaffected.
 
+### Open questions (not yet scheduled)
+
+- **关卡顺序是否要打乱**。当前 `ALL_KEYS` 严格按文件名 `00001…03548` 字典序，是原 APK 编排的难度曲线。讨论过的几种方向（按用户决定再选其一）：
+    1. 分难度桶 shuffle —— 用文件名里的 `[NxM]_[arrowCount]` 划桶，每个玩家首次启动生成固定 shuffle 种子（写进进度持久化），桶内随机、桶间按难度递增。保留爬坡，引入新鲜感。
+    2. 主线不动 + 加「随机一关」按钮 —— picker 顶部多一个按钮，从未通关池里抽。改动最小。
+    3. 按 tag 分章节 —— 文件名带 `[Snake, Country, Aztec, Basic, Spaghetti]`，按 tag 重排成章节。picker UI 改动较多。
+    
+    选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
+
 ---
 
 ## Decisions that should NOT be revisited without explicit consent
