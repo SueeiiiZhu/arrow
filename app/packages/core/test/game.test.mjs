@@ -183,3 +183,63 @@ test("findArrowAt picks up the arrow whose in-grid body cell matches", () => {
 test("cellKey is stable", () => {
   assert.equal(cellKey(3, 7), "3,7");
 });
+
+// --- Self-block (own body blocks own head) ---------------------------------
+
+test("head blocked by own bent body produces zero steps (shake+thud)", () => {
+  // 6x5 grid. Arrow head=(2,2), facing=(+1,0). path loops over and lands on
+  // the head's facing ray with a segment that WON'T have vacated by then:
+  //   (2,2)→(1,2)→(1,3)→(2,3)→(3,3)→(3,2)→(4,2). n=7.
+  // Step 1 target = (3,2) = path[5]. ownIdx=5; at ray offset m=1 the body
+  // still contains path[i] for i ≤ n-1-m = 5. 5 ≤ 5 → BLOCKED. Same
+  // shake+thud as being blocked by another arrow.
+  const level = levelOf(6, 5, [
+    {
+      start: { x: 2, y: 2 },
+      facing: { x: 1, y: 0 },
+      path: [
+        { x: 2, y: 2 },
+        { x: 1, y: 2 },
+        { x: 1, y: 3 },
+        { x: 2, y: 3 },
+        { x: 3, y: 3 },
+        { x: 3, y: 2 },
+        { x: 4, y: 2 },
+      ],
+    },
+  ]);
+  assert.equal(validateLevel(level), null);
+  const game = createGame(level);
+  const r = tryPull(game, 0);
+  assert.equal(r.steps, 0, "self-block must not advance");
+  assert.equal(r.escaped, false);
+  assert.equal(game.arrows[0].progress, 0);
+});
+
+test("head passes through where own tail was (tail vacates in time)", () => {
+  // 4x3 grid. Arrow head=(1,1), facing=(+1,0). Body curls so the TAIL
+  // sits at the head's first ray cell:
+  //   (1,1)→(0,1)→(0,2)→(1,2)→(2,2)→(2,1). n=6, tail=path[5]=(2,1)=head+facing.
+  // Step 1 target = (2,1) = path[5]. ownIdx=5, n-1-m=4. 5 > 4 → tail has
+  // already slid forward, so the head enters. The arrow snakes off the
+  // right edge.
+  const level = levelOf(4, 3, [
+    {
+      start: { x: 1, y: 1 },
+      facing: { x: 1, y: 0 },
+      path: [
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+        { x: 0, y: 2 },
+        { x: 1, y: 2 },
+        { x: 2, y: 2 },
+        { x: 2, y: 1 },
+      ],
+    },
+  ]);
+  assert.equal(validateLevel(level), null);
+  const game = createGame(level);
+  const r = tryPull(game, 0);
+  assert.equal(r.escaped, true, "tail-at-head+facing should still escape");
+  assert.equal(r.won, true);
+});

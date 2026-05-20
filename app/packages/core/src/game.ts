@@ -13,9 +13,17 @@ import type { ArrowData, LevelData, Vec2 } from "./types.js";
  * The body therefore slithers along its OWN curved path; the head emerges
  * past path[0] in a straight line along facing.
  *
- * Collision: a step is blocked when the new head cell is on-grid AND
- * currently occupied by another non-escaped arrow's body cell. Off-grid
- * head positions are fine — the head pokes out of the puzzle shape.
+ * Collision: a step is blocked when the new head cell is on-grid AND, at
+ * the moment the head arrives, occupied by some non-escaped arrow's body
+ * cell. Other arrows don't move during this pull, so their bodies are
+ * snapshot once. This arrow's body DOES slide forward with each step, so
+ * own-body collisions are evaluated dynamically — at ray offset m the
+ * segment originally at path[i] has vacated iff i > n-1-m. As a result
+ * the head can pass through where the tail used to be (the tail moves
+ * out of the way), but it WILL block on bent body segments that would
+ * still be occupying the target when the head arrives — producing the
+ * same shake+thud as being blocked by another arrow. Off-grid head
+ * positions are fine — the head pokes out of the puzzle shape.
  * The head ALSO freely crosses "void" cells (in-grid cells inside the
  * bounding rectangle that aren't in any arrow's path); this is verified
  * empirically by `packages/tools/src/analyze-head-void.mjs` — out of a
@@ -165,14 +173,26 @@ export function tryPull(state: GameState, arrowId: number): PullResult {
   const { facing, path } = arrow.data;
   const n = path.length;
 
-  // Obstacle set = in-grid integer body cells of every OTHER non-escaped
-  // arrow. They don't move during this pull, so we snapshot once.
+  // Other-arrow obstacle set: static snapshot of in-grid body cells of every
+  // OTHER non-escaped arrow. They don't move during this pull.
   const obstacles = new Set<string>();
   for (const other of state.arrows) {
     if (other.id === arrow.id || other.escaped) continue;
     for (const c of bodyCellsInGrid(other, W, H)) {
       obstacles.add(cellKey(c.x, c.y));
     }
+  }
+
+  // Own-body lookup: for each path cell index i in [1, n-1], record its key.
+  // At step ray offset m, the segment originally at path[i] is still part of
+  // the body iff i <= n-1-m (it slides forward by one cell per step). So a
+  // self-collision occurs iff the new head cell coincides with path[i] for
+  // some i in [1, n-1-m].
+  const ownPathIndex = new Map<string, number>();
+  for (let i = 1; i < n; i++) {
+    const c = path[i]!;
+    const key = cellKey(c.x, c.y);
+    if (!ownPathIndex.has(key)) ownPathIndex.set(key, i);
   }
 
   let steps = 0;
@@ -183,7 +203,12 @@ export function tryPull(state: GameState, arrowId: number): PullResult {
     const hx = path[0]!.x + k * facing.x;
     const hy = path[0]!.y + k * facing.y;
     const headOnGrid = hx >= 0 && hx < W && hy >= 0 && hy < H;
-    if (headOnGrid && obstacles.has(cellKey(hx, hy))) break;
+    if (headOnGrid) {
+      const key = cellKey(hx, hy);
+      if (obstacles.has(key)) break;
+      const ownIdx = ownPathIndex.get(key);
+      if (ownIdx !== undefined && ownIdx <= n - 1 - k) break;
+    }
     steps++;
 
     // Escape when the tail (segment n-1) has gone off-grid. Tail position
