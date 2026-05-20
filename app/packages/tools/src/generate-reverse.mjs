@@ -218,6 +218,20 @@ function placeOne(W, H, grid, rand, opts, rayMap) {
   for (const { start, facing, second } of ordered) {
     const path = [start, second];
     const used = new Set([idx(start[0], start[1]), idx(second[0], second[1])]);
+    // Reserve our own facing ray as off-limits during extension. Without this
+    // the random walk can curl back so that path[k>0] lands on start + j*facing,
+    // producing a head-eats-tail visual: the head appears to be blocked by
+    // its own body. snake-walk lets the head step into a cell its own body is
+    // vacating, so the engine considers this legal, but players read it as
+    // permanently stuck (and the APK corpus contains the shape in 0.003 % of
+    // arrows — essentially never).
+    let rx = start[0] + facing[0];
+    let ry = start[1] + facing[1];
+    while (rx >= 0 && rx < W && ry >= 0 && ry < H) {
+      used.add(idx(rx, ry));
+      rx += facing[0];
+      ry += facing[1];
+    }
     extendPath(path, used, W, H, grid, rand, opts, rayMap);
     if (path.length >= opts.minLen) {
       return { start, facing, path };
@@ -307,6 +321,10 @@ function extendTails(W, H, grid, arrows, rand) {
         if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
         if (grid[idx(nx, ny)] !== 0) continue;
         const ci = idx(nx, ny);
+        // Forbid extending tail into this arrow's OWN facing ray —
+        // that creates the head-eats-tail visual the player reads as
+        // permanently stuck.
+        if (rayByArrow[m].ray.has(ci)) continue;
         let valid = true;
         for (let j = 0; j < m; j++) {
           if (rayByArrow[j].ray.has(ci)) {
