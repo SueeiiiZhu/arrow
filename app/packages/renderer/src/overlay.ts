@@ -1,4 +1,5 @@
 import type { DrawCtx } from "./canvas-ctx.js";
+import { colorFor } from "./palette.js";
 
 export interface OverlayHitbox {
   next: { x: number; y: number; w: number; h: number };
@@ -7,15 +8,10 @@ export interface OverlayHitbox {
 /**
  * Full-screen win overlay drawn on top of the board.
  *
- * Layout: a single visual column centered on (cx, cy):
- *   1. Title "通关！" — scales in with an overshoot pop.
- *   2. Particle burst radiating from the title.
- *   3. Rounded "下一关 ▶" pill button — slides up + fades in last.
- *
- * `phase` is seconds since the win event; the layout reaches steady-state
- * around 0.8s. Returns the button hitbox so the input layer can dispatch
- * taps. Uses only the minimal DrawCtx surface (no shadows/gradients) so
- * the overlay renders identically on the wxgame canvas.
+ * Particles are triangular arrow glyphs (same shape as the in-game arrow
+ * head, rotated to fly outward) so the overlay speaks the same visual
+ * language as the board. Colors come from `palette.colorFor` so the burst
+ * matches the multi-color arrow set.
  */
 export function drawWinOverlay(
   ctx: DrawCtx,
@@ -34,9 +30,10 @@ export function drawWinOverlay(
   const burstFade = 1 - easeIn(clamp01((phase - 0.35) / 0.55));
   const btnP = easeOut(clamp01((phase - 0.45) / 0.35));
 
-  // 1) Backdrop.
+  // 1) Backdrop — matches the board background so the overlay feels like a
+  //    dimmed continuation of the board, not a foreign panel.
   ctx.globalAlpha = backdropP * 0.82;
-  ctx.fillStyle = "#0b1220";
+  ctx.fillStyle = "#0f172a";
   ctx.fillRect(0, 0, canvasW, canvasH);
   ctx.globalAlpha = 1;
 
@@ -56,22 +53,22 @@ export function drawWinOverlay(
     ctx.globalAlpha = 1;
   }
 
-  // 3) Particle burst — alternating gold + magenta + emerald stars radiating
-  //    out from the title position. Each particle eases out to its peak
-  //    radius then fades.
+  // 3) Particle burst — small triangle arrows radiating outward, each
+  //    rotated to point along its travel direction. Colors come from the
+  //    in-game palette so the burst looks like the level's arrows escaping
+  //    together. Eases out to peak radius then fades.
   if (burstFade > 0.02) {
     const maxR = minSide * 0.46;
-    const particles = 12;
-    const palette = ["#fbbf24", "#f472b6", "#34d399"];
+    const particles = 14;
     for (let i = 0; i < particles; i++) {
       const a = (i / particles) * Math.PI * 2 + 0.18;
       const r = maxR * burstIn;
       const px = cx + Math.cos(a) * r;
       const py = titleY + Math.sin(a) * r;
-      const sz = minSide * 0.028 * burstFade;
-      if (sz < 0.6) continue;
+      const sz = minSide * 0.034 * burstFade;
+      if (sz < 1) continue;
       ctx.globalAlpha = burstFade;
-      drawStar(ctx, px, py, sz, palette[i % palette.length]!);
+      drawArrowParticle(ctx, px, py, a, sz, colorFor(i));
     }
     ctx.globalAlpha = 1;
   }
@@ -159,20 +156,35 @@ function fillRoundedRect(
   ctx.fill();
 }
 
-function drawStar(ctx: DrawCtx, cx: number, cy: number, r: number, color: string): void {
+// Same proportions as drawArrowGlyph in board.ts but parameterized by a
+// single size so it can stand on its own (no ViewTransform needed).
+function drawArrowParticle(
+  ctx: DrawCtx,
+  cx: number,
+  cy: number,
+  angle: number,
+  size: number,
+  color: string,
+): void {
+  const fwd = size;
+  const back = size * 0.52;
+  const half = size * 0.82;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
   ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = size * 0.28;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
-  const points = 5;
-  for (let i = 0; i < points * 2; i++) {
-    const a = -Math.PI / 2 + (i * Math.PI) / points;
-    const rad = i % 2 === 0 ? r : r * 0.45;
-    const x = cx + Math.cos(a) * rad;
-    const y = cy + Math.sin(a) * rad;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
+  ctx.moveTo(fwd, 0);
+  ctx.lineTo(-back, half);
+  ctx.lineTo(-back, -half);
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function clamp01(x: number): number {
