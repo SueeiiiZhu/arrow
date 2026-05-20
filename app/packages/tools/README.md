@@ -14,6 +14,7 @@ All scripts depend on the compiled `@ea/core`, so they run `pnpm -F @ea/core bui
 | `pnpm --filter @ea/tools stat:corpus` | Dump distributional statistics over the full 3548-level corpus (grid sizes, arrow counts, snake lengths, corners, density, facing, tags). |
 | `pnpm --filter @ea/tools generate -- [flags]` | **Procedural level generator** (path-partition algorithm — see below). |
 | `pnpm --filter @ea/tools generate:reverse -- [flags]` | **Reverse-construction generator** (recommended; scales to corpus-median grids — see below). |
+| `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | Distributional comparison: reverse-generated batch vs. same-size corpus sample, on fill / init-escapable / bottleneck / greedy-moves / path-length. See "Quality evaluation" below. |
 
 ## Procedural level generator (`generate.mjs`)
 
@@ -168,3 +169,69 @@ The `--min-sequencing` filter is a coarse quality lever — it caps the fraction
 - **Path-length distribution**: corpus median is p50=7 / p90=24. The default `[3, 30]` matches that, but a more constrained distribution might feel more curated.
 
 None wired yet — the current generator gates only on construction correctness and the sequencing fraction.
+
+## Quality evaluation (`quality-eval.mjs`)
+
+Generator output is "solvable by construction", but solvability is the floor, not the ceiling. To know whether the generated batch *feels* like the APK corpus, we compare distributions on a handful of shape / structural / heuristic-difficulty metrics — a side-by-side at the same grid size.
+
+The script generates `--count` levels via the reverse algorithm at `W × H`, scans `levels_data/` for corpus levels at the **same** dimensions, and prints mean / median / IQR for each metric for both sides.
+
+### Usage
+
+```bash
+# 30 generated 25×31 levels vs all corpus levels at 25×31:
+pnpm --filter @ea/tools quality:eval -- --w=25 --h=31 --count=30 --seed=1
+
+# Skip the corpus comparison (faster, generator-only smoke check):
+pnpm --filter @ea/tools quality:eval -- --w=20 --h=20 --count=20 --gen-only
+```
+
+### Flags
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--w`, `--h` | 25 × 31 | Grid size. Pick a size with several corpus matches (use `stat:corpus` to find common sizes). |
+| `--count` | 30 | Number of synthetic levels to generate. |
+| `--seed` | 1 | PRNG seed (`mulberry32`). |
+| `--max-attempts` | 20 | Per-level rejection cap, mirrors `generate-reverse.mjs`. |
+| `--gen-only` | off | Skip the corpus scan — just dump generator-side stats. |
+
+### Metrics
+
+| Metric | What it captures |
+| --- | --- |
+| `arrows` | Arrow count per level. |
+| `fill %` | `(sum of arrow lengths) / (W × H)`. Corpus median is ~96 %. |
+| `init-escapable %` | Fraction of arrows that can already escape from the initial state (facing ray clear). **High = loose puzzle, low = tight.** |
+| `bottleneck %` | Fraction of arrows whose body blocks ≥ 2 other arrows' facing rays. **High = more keystone pieces.** |
+| `greedy moves/arrow` | Ratio of greedy escape moves to arrows. `> 1.0` means at least one re-pull. **The current generator and corpus both sit at exactly 1.0**, so the greedy heuristic doesn't currently discriminate — listed for future tuning. |
+| `path len p50` / `p90` | Snake-length percentiles within the level. Corpus median (across levels) is p50≈7, p90≈24. |
+
+### Example output
+
+```
+=== 25×31 · generated=30 · corpus=7 · seed=1 ===
+metric                [generated]                               [corpus]
+──────────────────────────────────────────────────────────────────────────────────────
+arrows                μ    37   med    38   iqr    35–   40    μ    57   med    67   iqr    37–   70
+fill %                μ  63%   med  63%   iqr  59%– 65%        μ  97%   med  97%   iqr  95%– 99%
+init-escapable %      μ  47%   med  48%   iqr  39%– 53%        μ   9%   med   9%   iqr   6%– 11%
+bottleneck %          μ  12%   med  12%   iqr  10%– 15%        μ  25%   med  26%   iqr  21%– 27%
+greedy moves/arrow    μ  1.00   med  1.00   iqr  1.00– 1.00    μ  1.00   med  1.00   iqr  1.00– 1.00
+path len p50          μ    12   med    12   iqr    11–   13    μ    10   med     8   iqr     6–   15
+path len p90          μ    25   med    25   iqr    24–   27    μ    33   med    27   iqr    25–   47
+```
+
+### How to read the gaps
+
+- **Fill 63 % vs 97 %** — the generator stops well below the corpus density. Lifting it needs algorithm changes (the random walk leaves too many orphan single-cell pockets when target fill is pushed past ~70 %).
+- **Init-escapable 47 % vs 9 %** — nearly half of generated arrows can escape on turn 1, vs. one in ten in the corpus. Tighten with `--min-sequencing=0.2` (or lower) at the cost of more rejections.
+- **Bottleneck 12 % vs 25 %** — corpus levels have twice as many keystone arrows. Likely the same root cause as the fill gap: sparser arrangements have fewer ways to obstruct.
+- **Greedy moves/arrow 1.00 on both sides** — current heuristic can't tell them apart. If you want this metric to discriminate, the generator needs to force re-pulls (e.g., reject any level the verifier solves in `arrows.length` moves flat).
+- **Path-length percentiles match closely** — the `[3, 30]` length window is already in the right zone.
+
+Treat the gaps as the prioritized punch list for the next generator pass. Re-run after each change and look for the deltas to narrow.
+
+### Corpus size warning
+
+At rare grid sizes the corpus side may have only one or two matches, which makes mean/IQR meaningless. Common sizes (e.g., 25×31, 31×38) have dozens. Use `pnpm --filter @ea/tools stat:corpus` to find sizes that are well-represented before running an evaluation.

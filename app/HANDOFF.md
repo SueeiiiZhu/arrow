@@ -1,6 +1,6 @@
 # Escape Arrows — Handoff / TODO
 
-> Last advanced 2026-05-19 (P0 + P1 + remaining P3 all cleared). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
+> Last advanced 2026-05-20 (P0 + P1 + remaining P3 all cleared; generator now has dev-playground + quality-eval). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
 
 ---
 
@@ -28,7 +28,9 @@
 - **Procedural level generator** — two algorithms, both written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
     - `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate` — path-partition + greedy/DFS filter. Yields up to 20×20, fails at 30×30. Kept around for comparison.
     - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on.
-    - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus).
+    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. Shows where the generator is loose (current snapshot at 25×31: fill 63 % vs 97 %, init-escapable 47 % vs 9 %; greedy moves/arrow tied at 1.00 — heuristic doesn't yet discriminate). Treats those gaps as the next punch list.
+    - **Independent dev-playground** at `packages/web/dev-playground.html` (only served by `pnpm dev:web` — `vite build` ignores it, never ships). Loads everything in `packages/tools/generated/` via `import.meta.glob`. Open at `http://localhost:5173/dev-playground.html`. Empty state if the dir is empty.
+    - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus). The dev-playground page is the sanctioned way to play them without touching the production corpus.
 
 ### Entry points cheat sheet
 
@@ -46,6 +48,8 @@
 | Compact → RawLevelFile decoder | `packages/wxgame/src/decode.ts` |
 | Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
 | Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended). Output to gitignored `packages/tools/generated/`. |
+| Generated-level dev playground | `packages/web/dev-playground.html` + `packages/web/src/dev-playground.ts` (dev server only). |
+| Generator quality eval | `packages/tools/src/quality-eval.mjs`. |
 | Biome config (format + lint) | `biome.json` |
 | CI workflow | `../.github/workflows/ci.yml` |
 
@@ -71,10 +75,12 @@
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
 
-- **生成器下一步：把生成的关卡接到 picker / 测试关 / 自动化质量评估上**。reverse 构造已经能稳定吐出语料中位数尺寸（31×38）甚至 50×50 的可解关卡（详见 `packages/tools/README.md` 的 yield 表），但目前 `packages/tools/generated/` 不进运行时—当前只验证 `tryPull` 能跑通，没人玩过这些关。下一步候选：
-    1. 自动质量评估：跑大批量样本，按 greedy moves/arrows 比、bottleneck 箭头数、首关可解箭头比例分桶画分布，对比 `levels_data/` 的同尺寸样本看「分布像不像真关」。
-    2. 离线人工试玩：从 `packages/tools/generated/` 拷一两关进单独的 `dev-only` 入口（绝不进 `levels_data/`），用 H5 dev server 实际玩，做主观打分。
-    3. 等稳定后再决定要不要接入正式关卡流。在这之前生成的关卡保持在 gitignored 目录里。
+- **生成器下一步：缩小与正式语料的分布差距**。dev-playground (`packages/web/dev-playground.html`) 和 `quality:eval` 都已经接好（详见 `packages/tools/README.md`），25×31 上一轮对比的几个关键 gap：
+    1. **Fill 63 % vs 97 %**：random walk 在 target fill 推到 70 % 以上会留太多孤立单格。要追上语料密度需要算法改动（比如先 path partition 占满，再在 partition 上跑反向构造排序）。
+    2. **Init-escapable 47 % vs 9 %**：生成关里有近一半箭头第一步就能跑。短期能用 `--min-sequencing=0.2` 缓解（生成会更慢、拒绝率上升）；想再低估计要 placement 阶段直接惩罚 facing 朝向出口的候选。
+    3. **Bottleneck 12 % vs 25 %**：keystone 箭头不够。和 fill 一同根因，更紧密的排布自然有更多互相阻挡。
+    4. **Greedy moves/arrow 1.00 = 1.00**：当前 heuristic 完全不区分两边。如果要用它当 quality lever，得让生成器主动强制 re-pull（拒绝任何 `tryPull` 一遍跑完 = `arrows.length` 步的关）。
+    5. 在 fill / init-esc 两条主线缩短到肉眼接近之前，**不要**把生成关接进正式 picker / `levels_data/`。可以先把样本扔进 dev-playground 让人主观盲测打分。
 - **生成器：`min-sequencing` 之外的更精细 "fun" 指标**。`packages/tools/README.md` §"What about quality / 'fun'?"列了几个候选（greedy heuristic gap / bottleneck arrow / path-length distribution），都没接。
 
 ---
@@ -107,6 +113,8 @@ pnpm --filter @ea/tools analyze:void         # LAX vs STRICT head-extension simu
 pnpm --filter @ea/tools stat:corpus          # 3548-level distributional statistics
 pnpm --filter @ea/tools generate -- --w=10 --h=10 --count=5 --seed=42   # path-partition generator → stdout (add --out to write files)
 pnpm --filter @ea/tools generate:reverse -- --w=31 --h=38 --count=5 --seed=1   # reverse-construction generator (recommended; scales to corpus-median)
+pnpm --filter @ea/tools quality:eval -- --w=25 --h=31 --count=30 --seed=1      # generated batch vs corpus distributions
+# Then, with dev server running: open http://localhost:5173/dev-playground.html to play the generated/ output
 ```
 
 WeChat DevTools: *Mini Game → Import Project → select `app/packages/wxgame/dist/wxgame/`*.

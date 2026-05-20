@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Escape Arrows · DEV Playground</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; background: #1a0f2e; color: #f3e8ff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      #app { display: flex; flex-direction: column; height: 100%; }
+      header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: #2d1b4e; border-bottom: 2px dashed #f59e0b; }
+      header .badge { background: #f59e0b; color: #1a0f2e; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
+      header label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+      header select, header input { background: #1a0f2e; color: #f3e8ff; border: 1px solid #4c1d95; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+      header select { min-width: 320px; max-width: 50vw; }
+      header button { background: #7c3aed; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+      header button:hover { background: #6d28d9; }
+      header button:disabled { background: #4c1d95; cursor: not-allowed; opacity: 0.6; }
+      main { flex: 1; position: relative; overflow: hidden; }
+      canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+      .info { position: absolute; bottom: 8px; left: 8px; font-size: 11px; opacity: 0.7; line-height: 1.4; }
+      .info code { background: #2d1b4e; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+      .empty-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; }
+      .empty-state .box { max-width: 520px; background: #2d1b4e; padding: 24px 28px; border-radius: 8px; border: 1px dashed #4c1d95; font-size: 14px; line-height: 1.6; }
+      .empty-state code { background: #1a0f2e; padding: 2px 6px; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <span class="badge">DEV</span>
+        <strong>离线试玩</strong>
+        <label>关卡:
+          <select id="level-select"></select>
+        </label>
+        <button id="prev-btn">‹</button>
+        <button id="next-btn">›</button>
+        <button id="reset-btn">重开</button>
+        <label><input type="checkbox" id="show-paths" /> 显示路径</label>
+        <span id="meta" style="opacity:0.7;font-size:12px;"></span>
+        <span id="status" style="font-size:13px;font-weight:600;margin-left:auto;"></span>
+      </header>
+      <main>
+        <canvas id="board"></canvas>
+        <div class="info">
+          仅 dev server 入口 · 关卡来自 <code>packages/tools/generated/</code>（gitignored）· 不影响正式数据
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/dev-playground.ts"></script>
+  </body>
+</html>
