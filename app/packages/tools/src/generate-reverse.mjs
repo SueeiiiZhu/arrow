@@ -30,11 +30,17 @@
 //   --count            how many levels to produce (default 5)
 //   --target-fill      target fill density 0-1 (default 0.85)
 //   --min-arrow-len    minimum path length per arrow (default 3)
-//   --max-arrow-len    maximum path length per arrow (default 30)
+//   --max-arrow-len    construction-time target length cap (default 12 —
+//                      tail extension still grows arrows up to 30 cells)
 //   --max-arrows       hard cap on arrows per level (default 300)
 //   --max-attempts     give up after this many candidates per requested level (default 20)
 //   --min-sequencing   require initial-escapable arrows < arrows × this fraction
 //                      (default 0.5 — i.e. at least half the arrows must be initially blocked)
+//   --ray-bias         prob. of picking a body cell on a preceding arrow's
+//                      ray when extending (default 0.95 — high keeps init-
+//                      escapable count low)
+//   --straight-bias    prob. of continuing in the same direction during path
+//                      extension (default 0.65)
 //   --out              output dir, or stdout JSONL if omitted
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -90,15 +96,20 @@ function collectAnchors(W, H, grid) {
     for (let x = 0; x < W; x++) {
       if (!isEmpty(x, y)) continue;
       for (const [fx, fy] of DIRS) {
-        // Forward ray must be all empty (excluding path[0] itself).
+        // Forward ray must be all empty (excluding path[0] itself). Also
+        // count how many in-grid cells the ray covers — ray length 0 means
+        // the head steps off-grid immediately, so it is forever
+        // init-escapable (no cell exists where a blocker could be placed).
         let cx = x + fx;
         let cy = y + fy;
         let clear = true;
+        let rayLen = 0;
         while (inGrid(cx, cy)) {
           if (!isEmpty(cx, cy)) {
             clear = false;
             break;
           }
+          rayLen++;
           cx += fx;
           cy += fy;
         }
@@ -107,7 +118,7 @@ function collectAnchors(W, H, grid) {
         const bx = x - fx;
         const by = y - fy;
         if (!inGrid(bx, by) || !isEmpty(bx, by)) continue;
-        out.push({ start: [x, y], facing: [fx, fy], second: [bx, by] });
+        out.push({ start: [x, y], facing: [fx, fy], second: [bx, by], rayLen });
       }
     }
   }
@@ -118,8 +129,14 @@ function collectAnchors(W, H, grid) {
 
 // Extend `path` by a constrained random walk through empty cells with a
 // straight-line bias. Mutates `path` and `used`.
-function extendPath(path, used, W, H, grid, rand, opts) {
-  const { minLen, maxLen, straightBias } = opts;
+//
+// `rayMap`: Map<cellIdx, hitCount> — empty cells lying on some
+// already-placed arrow's facing ray. We prefer those cells when extending
+// (with `rayBias` probability), which makes the new arrow's body more
+// likely to block earlier-placed arrows in the final state — reducing
+// init-escapable count.
+function extendPath(path, used, W, H, grid, rand, opts, rayMap) {
+  const { minLen, maxLen, straightBias, rayBias } = opts;
   const idx = (x, y) => y * W + x;
   const inGrid = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
   const isEmpty = (x, y) => grid[idx(x, y)] === 0;
@@ -142,11 +159,18 @@ function extendPath(path, used, W, H, grid, rand, opts) {
     if (free.length === 0) break;
     if (path.length >= targetLen && rand() < 0.4) break;
 
+    // Ray-blocking takes priority over straight-bias: hitting a preceding
+    // arrow's ray converts it from init-escapable to blocked, which is the
+    // metric most in deficit vs the corpus.
     let pick;
-    if (lastDir && rand() < straightBias) {
+    const onRay = free.filter((d) => (rayMap.get(idx(hx + d[0], hy + d[1])) || 0) > 0);
+    if (onRay.length > 0 && rand() < rayBias) {
+      pick = onRay[Math.floor(rand() * onRay.length)];
+    } else if (lastDir && rand() < straightBias) {
       const straight = free.find((d) => d[0] === lastDir[0] && d[1] === lastDir[1]);
-      pick = straight ?? free[Math.floor(rand() * free.length)];
-    } else {
+      pick = straight ?? null;
+    }
+    if (!pick) {
       pick = free[Math.floor(rand() * free.length)];
     }
     const nx = hx + pick[0];
@@ -157,23 +181,168 @@ function extendPath(path, used, W, H, grid, rand, opts) {
   }
 }
 
-// Place one arrow into the grid. Iterates over shuffled anchors and accepts
-// the first whose path can be extended to at least minLen.
-function placeOne(W, H, grid, rand, opts) {
+// Place one arrow into the grid. Iterates over anchor candidates and
+// accepts the first whose path can be extended to at least minLen.
+//
+// Anchor priority (descending):
+//   1. rayLen >= 1 (so a blocker CAN later be placed on the ray) AND
+//      path[1] sits on some preceding arrow's facing ray (this arrow's
+//      body immediately blocks an earlier-placed arrow).
+//   2. rayLen >= 1 alone.
+//   3. rayLen == 0 (zero-ray arrows are forever init-escapable; we keep
+//      them as a fallback so the grid can fill, mirroring the corpus's
+//      ~10 % init-escapable share).
+// Within each bucket the order is shuffled to keep `--seed` reproducibility.
+function placeOne(W, H, grid, rand, opts, rayMap) {
   const anchors = collectAnchors(W, H, grid);
   if (anchors.length === 0) return null;
-  shuffleInPlace(anchors, rand);
 
   const idx = (x, y) => y * W + x;
-  for (const { start, facing, second } of anchors) {
+  const bucket = [[], [], []];
+  for (const a of anchors) {
+    const ci = idx(a.second[0], a.second[1]);
+    const onRay = (rayMap.get(ci) || 0) > 0;
+    if (a.rayLen >= 1 && onRay) bucket[0].push(a);
+    else if (a.rayLen >= 1) bucket[1].push(a);
+    else bucket[2].push(a);
+  }
+  for (const b of bucket) shuffleInPlace(b, rand);
+  const ordered = bucket[0].concat(bucket[1], bucket[2]);
+
+  for (const { start, facing, second } of ordered) {
     const path = [start, second];
     const used = new Set([idx(start[0], start[1]), idx(second[0], second[1])]);
-    extendPath(path, used, W, H, grid, rand, opts);
+    extendPath(path, used, W, H, grid, rand, opts, rayMap);
     if (path.length >= opts.minLen) {
       return { start, facing, path };
     }
   }
   return null;
+}
+
+// Walk arrow.facing from arrow.path[0] outward; increment rayMap for each
+// empty in-grid cell encountered (off-grid stops the walk).
+function recordRay(arrow, W, H, grid, rayMap) {
+  const idx = (x, y) => y * W + x;
+  let cx = arrow.path[0][0] + arrow.facing[0];
+  let cy = arrow.path[0][1] + arrow.facing[1];
+  while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
+    const ci = idx(cx, cy);
+    if (grid[ci] === 0) {
+      rayMap.set(ci, (rayMap.get(ci) || 0) + 1);
+    }
+    cx += arrow.facing[0];
+    cy += arrow.facing[1];
+  }
+}
+
+// Post-process: extend each arrow's tail into adjacent empty cells. New
+// tail cell c is valid iff c is not on any earlier-escaping arrow's facing
+// ray (those arrows pull while this one is still in the grid, so c can't
+// obstruct them — that'd make the level unsolvable).
+//
+// Preference order, for arrow m extending to cell c:
+//   1. c sits on some still-init-escapable arrow k's ray (k > m).
+//      Strongest preference — directly converts k from init-esc to blocked,
+//      which is the metric we most want to close vs corpus.
+//   2. c sits on some later-escaping (already-blocked) arrow's ray.
+//      Weaker preference — tightens packing without changing init-esc.
+//   3. Any valid c (just fills cells).
+//
+// Inputs:
+//   arrows: in ESCAPE order (post-reverse). arrows[0] escapes first.
+//   grid: occupancy after main construction (1 = filled, 0 = empty).
+// Returns: number of cells added.
+function extendTails(W, H, grid, arrows, rand) {
+  const idx = (x, y) => y * W + x;
+  const rayByArrow = arrows.map((a) => {
+    const ray = new Set();
+    const list = [];
+    let cx = a.path[0][0] + a.facing[0];
+    let cy = a.path[0][1] + a.facing[1];
+    while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
+      const ci = idx(cx, cy);
+      ray.add(ci);
+      list.push(ci);
+      cx += a.facing[0];
+      cy += a.facing[1];
+    }
+    return { ray, list };
+  });
+
+  // Live set of init-escapable arrow indices, recomputed lazily.
+  const computeInitEsc = () => {
+    const out = new Set();
+    for (let i = 0; i < arrows.length; i++) {
+      let escapable = true;
+      for (const ci of rayByArrow[i].list) {
+        if (grid[ci] !== 0) {
+          escapable = false;
+          break;
+        }
+      }
+      if (escapable) out.add(i);
+    }
+    return out;
+  };
+  const initEsc = computeInitEsc();
+
+  let added = 0;
+  let madeProgress = true;
+  while (madeProgress) {
+    madeProgress = false;
+    for (let m = 0; m < arrows.length; m++) {
+      if (arrows[m].path.length >= 30) continue;
+      const [tx, ty] = arrows[m].path[arrows[m].path.length - 1];
+      const candidates = [];
+      for (const [dx, dy] of DIRS) {
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        if (grid[idx(nx, ny)] !== 0) continue;
+        const ci = idx(nx, ny);
+        let valid = true;
+        for (let j = 0; j < m; j++) {
+          if (rayByArrow[j].ray.has(ci)) {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) candidates.push([dx, dy, ci]);
+      }
+      if (candidates.length === 0) continue;
+      const blocksInitEsc = candidates.filter(([, , ci]) => {
+        for (const k of initEsc) {
+          if (k > m && rayByArrow[k].ray.has(ci)) return true;
+        }
+        return false;
+      });
+      let pool;
+      if (blocksInitEsc.length > 0) {
+        pool = blocksInitEsc;
+      } else {
+        const blocking = candidates.filter(([, , ci]) => {
+          for (let j = m + 1; j < arrows.length; j++) {
+            if (rayByArrow[j].ray.has(ci)) return true;
+          }
+          return false;
+        });
+        pool = blocking.length > 0 ? blocking : candidates;
+      }
+      const [dx, dy, ci] = pool[Math.floor(rand() * pool.length)];
+      arrows[m].path.push([tx + dx, ty + dy]);
+      grid[ci] = 1;
+      added++;
+      madeProgress = true;
+      // Update init-esc set: any k whose ray contained ci is now blocked.
+      if (initEsc.size > 0) {
+        for (const k of initEsc) {
+          if (rayByArrow[k].ray.has(ci)) initEsc.delete(k);
+        }
+      }
+    }
+  }
+  return added;
 }
 
 // --- Top-level construction ------------------------------------------------
@@ -182,23 +351,38 @@ function generate(W, H, rand, opts) {
   const grid = new Uint8Array(W * H);
   const idx = (x, y) => y * W + x;
   const arrows = []; // placed in reverse escape order
+  const rayMap = new Map(); // empty cell idx -> count of preceding facing rays
   let filled = 0;
   const targetCells = Math.floor(W * H * opts.targetFill);
 
   for (let k = 0; k < opts.maxArrows; k++) {
     if (filled >= targetCells) break;
-    const arrow = placeOne(W, H, grid, rand, opts);
+    let arrow = placeOne(W, H, grid, rand, opts, rayMap);
+    // Fallback: relax minLen to 2 when geometry gets tight, so we keep
+    // filling the grid instead of giving up early. We only do this once
+    // per placement attempt.
+    if (!arrow && opts.minLen > 2) {
+      arrow = placeOne(W, H, grid, rand, { ...opts, minLen: 2 }, rayMap);
+    }
     if (!arrow) break;
     for (const [x, y] of arrow.path) {
       grid[idx(x, y)] = 1;
+      rayMap.delete(idx(x, y)); // cell is now occupied, no longer a "blocker-needed" cell
       filled++;
     }
+    recordRay(arrow, W, H, grid, rayMap);
     arrows.push(arrow);
   }
 
   // arrows is in construction order (A_n, A_{n-1}, …, A_1); flip to escape order.
   arrows.reverse();
-  return { arrows, fillRate: filled / (W * H) };
+
+  // Patch fill: extend tails into adjacent empty cells, preferring cells
+  // that block currently-init-escapable arrows.
+  const tailAdded = extendTails(W, H, grid, arrows, rand);
+  filled += tailAdded;
+
+  return { arrows, fillRate: filled / (W * H), tailAdded };
 }
 
 function buildRawLevel(W, H, arrows) {
@@ -285,14 +469,16 @@ const baseSeed = Number(args.seed ?? 1);
 const count = Number(args.count ?? 5);
 const targetFill = Number(args["target-fill"] ?? 0.85);
 const minLen = Number(args["min-arrow-len"] ?? 3);
-const maxLen = Number(args["max-arrow-len"] ?? 30);
+const maxLen = Number(args["max-arrow-len"] ?? 12);
 const maxArrows = Number(args["max-arrows"] ?? 300);
 const maxAttempts = Number(args["max-attempts"] ?? 20);
 const minSequencing = Number(args["min-sequencing"] ?? 0.5);
+const rayBias = Number(args["ray-bias"] ?? 0.95);
+const straightBias = Number(args["straight-bias"] ?? 0.65);
 const outDir =
   args.out === undefined ? null : args.out === "true" ? DEFAULT_OUT : resolve(args.out);
 
-const opts = { minLen, maxLen, targetFill, straightBias: 0.65, maxArrows };
+const opts = { minLen, maxLen, targetFill, straightBias, rayBias, maxArrows };
 
 if (outDir) mkdirSync(outDir, { recursive: true });
 

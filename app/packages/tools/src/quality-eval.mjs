@@ -88,11 +88,13 @@ function collectAnchors(W, H, grid) {
         let cx = x + fx;
         let cy = y + fy;
         let clear = true;
+        let rayLen = 0;
         while (inGrid(cx, cy)) {
           if (!isEmpty(cx, cy)) {
             clear = false;
             break;
           }
+          rayLen++;
           cx += fx;
           cy += fy;
         }
@@ -100,15 +102,16 @@ function collectAnchors(W, H, grid) {
         const bx = x - fx;
         const by = y - fy;
         if (!inGrid(bx, by) || !isEmpty(bx, by)) continue;
-        out.push({ start: [x, y], facing: [fx, fy], second: [bx, by] });
+        out.push({ start: [x, y], facing: [fx, fy], second: [bx, by], rayLen });
       }
     }
   }
   return out;
 }
 
-function extendPath(path, used, W, H, grid, rand, opts) {
-  const { minLen, maxLen, straightBias } = opts;
+// extendPath / placeOne / genOne mirror generate-reverse.mjs. Keep in sync.
+function extendPath(path, used, W, H, grid, rand, opts, rayMap) {
+  const { minLen, maxLen, straightBias, rayBias } = opts;
   const idx = (x, y) => y * W + x;
   const inGrid = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
   const isEmpty = (x, y) => grid[idx(x, y)] === 0;
@@ -130,10 +133,14 @@ function extendPath(path, used, W, H, grid, rand, opts) {
     if (free.length === 0) break;
     if (path.length >= targetLen && rand() < 0.4) break;
     let pick;
-    if (lastDir && rand() < straightBias) {
+    const onRay = free.filter((d) => (rayMap.get(idx(hx + d[0], hy + d[1])) || 0) > 0);
+    if (onRay.length > 0 && rand() < rayBias) {
+      pick = onRay[Math.floor(rand() * onRay.length)];
+    } else if (lastDir && rand() < straightBias) {
       const straight = free.find((d) => d[0] === lastDir[0] && d[1] === lastDir[1]);
-      pick = straight ?? free[Math.floor(rand() * free.length)];
-    } else {
+      pick = straight ?? null;
+    }
+    if (!pick) {
       pick = free[Math.floor(rand() * free.length)];
     }
     const nx = hx + pick[0];
@@ -144,37 +151,150 @@ function extendPath(path, used, W, H, grid, rand, opts) {
   }
 }
 
-function placeOne(W, H, grid, rand, opts) {
+function placeOne(W, H, grid, rand, opts, rayMap) {
   const anchors = collectAnchors(W, H, grid);
   if (anchors.length === 0) return null;
-  shuffleInPlace(anchors, rand);
   const idx = (x, y) => y * W + x;
-  for (const { start, facing, second } of anchors) {
+  const bucket = [[], [], []];
+  for (const a of anchors) {
+    const ci = idx(a.second[0], a.second[1]);
+    const onRay = (rayMap.get(ci) || 0) > 0;
+    if (a.rayLen >= 1 && onRay) bucket[0].push(a);
+    else if (a.rayLen >= 1) bucket[1].push(a);
+    else bucket[2].push(a);
+  }
+  for (const b of bucket) shuffleInPlace(b, rand);
+  for (const { start, facing, second } of bucket[0].concat(bucket[1], bucket[2])) {
     const path = [start, second];
     const used = new Set([idx(start[0], start[1]), idx(second[0], second[1])]);
-    extendPath(path, used, W, H, grid, rand, opts);
+    extendPath(path, used, W, H, grid, rand, opts, rayMap);
     if (path.length >= opts.minLen) return { start, facing, path };
   }
   return null;
+}
+
+function recordRay(arrow, W, H, grid, rayMap) {
+  const idx = (x, y) => y * W + x;
+  let cx = arrow.path[0][0] + arrow.facing[0];
+  let cy = arrow.path[0][1] + arrow.facing[1];
+  while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
+    const ci = idx(cx, cy);
+    if (grid[ci] === 0) rayMap.set(ci, (rayMap.get(ci) || 0) + 1);
+    cx += arrow.facing[0];
+    cy += arrow.facing[1];
+  }
+}
+
+function extendTails(W, H, grid, arrows, rand) {
+  const idx = (x, y) => y * W + x;
+  const rayByArrow = arrows.map((a) => {
+    const ray = new Set();
+    const list = [];
+    let cx = a.path[0][0] + a.facing[0];
+    let cy = a.path[0][1] + a.facing[1];
+    while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
+      const ci = idx(cx, cy);
+      ray.add(ci);
+      list.push(ci);
+      cx += a.facing[0];
+      cy += a.facing[1];
+    }
+    return { ray, list };
+  });
+  const computeInitEsc = () => {
+    const out = new Set();
+    for (let i = 0; i < arrows.length; i++) {
+      let escapable = true;
+      for (const ci of rayByArrow[i].list) {
+        if (grid[ci] !== 0) {
+          escapable = false;
+          break;
+        }
+      }
+      if (escapable) out.add(i);
+    }
+    return out;
+  };
+  const initEsc = computeInitEsc();
+  let added = 0;
+  let madeProgress = true;
+  while (madeProgress) {
+    madeProgress = false;
+    for (let m = 0; m < arrows.length; m++) {
+      if (arrows[m].path.length >= 30) continue;
+      const [tx, ty] = arrows[m].path[arrows[m].path.length - 1];
+      const candidates = [];
+      for (const [dx, dy] of DIRS) {
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        if (grid[idx(nx, ny)] !== 0) continue;
+        const ci = idx(nx, ny);
+        let valid = true;
+        for (let j = 0; j < m; j++) {
+          if (rayByArrow[j].ray.has(ci)) {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) candidates.push([dx, dy, ci]);
+      }
+      if (candidates.length === 0) continue;
+      const blocksInitEsc = candidates.filter(([, , ci]) => {
+        for (const k of initEsc) {
+          if (k > m && rayByArrow[k].ray.has(ci)) return true;
+        }
+        return false;
+      });
+      let pool;
+      if (blocksInitEsc.length > 0) {
+        pool = blocksInitEsc;
+      } else {
+        const blocking = candidates.filter(([, , ci]) => {
+          for (let j = m + 1; j < arrows.length; j++) {
+            if (rayByArrow[j].ray.has(ci)) return true;
+          }
+          return false;
+        });
+        pool = blocking.length > 0 ? blocking : candidates;
+      }
+      const [dx, dy, ci] = pool[Math.floor(rand() * pool.length)];
+      arrows[m].path.push([tx + dx, ty + dy]);
+      grid[ci] = 1;
+      added++;
+      madeProgress = true;
+      for (const k of initEsc) {
+        if (rayByArrow[k].ray.has(ci)) initEsc.delete(k);
+      }
+    }
+  }
+  return added;
 }
 
 function genOne(W, H, rand, opts) {
   const grid = new Uint8Array(W * H);
   const idx = (x, y) => y * W + x;
   const arrows = [];
+  const rayMap = new Map();
   let filled = 0;
   const targetCells = Math.floor(W * H * opts.targetFill);
   for (let k = 0; k < opts.maxArrows; k++) {
     if (filled >= targetCells) break;
-    const a = placeOne(W, H, grid, rand, opts);
+    let a = placeOne(W, H, grid, rand, opts, rayMap);
+    if (!a && opts.minLen > 2) {
+      a = placeOne(W, H, grid, rand, { ...opts, minLen: 2 }, rayMap);
+    }
     if (!a) break;
     for (const [x, y] of a.path) {
       grid[idx(x, y)] = 1;
+      rayMap.delete(idx(x, y));
       filled++;
     }
+    recordRay(a, W, H, grid, rayMap);
     arrows.push(a);
   }
   arrows.reverse();
+  extendTails(W, H, grid, arrows, rand);
   return {
     width: W,
     height: H,
@@ -335,9 +455,10 @@ const maxAttempts = Number(args["max-attempts"] ?? 20);
 
 const genOpts = {
   minLen: 3,
-  maxLen: 30,
+  maxLen: 12,
   targetFill: 0.85,
   straightBias: 0.65,
+  rayBias: 0.95,
   maxArrows: 300,
 };
 

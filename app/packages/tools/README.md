@@ -110,14 +110,19 @@ We build that guarantee in reverse: place `A_n` first (no constraints — nothin
 
 ### Algorithm
 
-1. Start with an empty grid.
+1. Start with an empty grid. Maintain `rayMap`: empty cell → number of preceding arrows whose facing ray passes through it. Placing a body cell here will block that many earlier-placed arrows in the final init state.
 2. For `k = n, n-1, …, 1` (target arrow count `n` is bounded by `--max-arrows` and `--target-fill`):
-   - Enumerate all `(start, facing)` anchors where `start` is empty, `start + i*facing` for `i=1,2,…` is empty until off-grid, and `start − facing` is in-grid + empty (this cell becomes `path[1]`).
-   - Shuffle and pick the first anchor; from `path[1]`, do a straight-biased random walk through empty cells to extend `path[2..]` to a target length in `[minLen, maxLen]`.
-   - Mark the path cells as occupied; record the arrow.
+   - Enumerate `(start, facing)` anchors where `start` is empty, `start + i*facing` is empty out to off-grid, and `start − facing` (= `path[1]`) is in-grid + empty. Record each anchor's `rayLen` (number of in-grid ray cells).
+   - **Bucket anchors** so the better init-esc reducers run first:
+     - `bucket[0]`: `rayLen ≥ 1` AND `path[1]` already on `rayMap` — placing here blocks a prior arrow immediately.
+     - `bucket[1]`: `rayLen ≥ 1`, `path[1]` not on `rayMap`.
+     - `bucket[2]`: `rayLen == 0` — the head escapes immediately and the arrow is forever init-escapable (no cell exists where any blocker could sit). Kept as a fallback so the grid can fill.
+   - From the first successful bucket, do a random walk through empty cells to extend `path[2..]` to a target length in `[minLen, maxLen]`. The walk **prefers cells already on `rayMap`** (`--ray-bias`, default 0.95) over the straight direction (`--straight-bias`, default 0.65); ray cells block prior arrows on contact.
+   - Mark path cells occupied; record the new arrow's ray into `rayMap`.
 3. Reverse the recorded list so `arrows[0]` is the first to escape. That sequence is the constructed solution.
-4. **Verify** by simulating `tryPull(arrowId)` for `id = 0, 1, …, n-1`. If any pull doesn't escape, the algorithm has a model bug — reject loudly. (Should never happen.)
-5. **Sequencing filter**: count how many arrows have an unblocked facing ray in the *initial* state. If too many (`> arrows × min-sequencing`, default 0.5) the level is too trivial — reject.
+4. **Extend tails**: round-robin over arrows, growing each arrow's tail into adjacent empty cells. New cell `c` is rejected if it sits on any **earlier-escaping** arrow's ray (would break that earlier arrow's pull). Among valid candidates, prefer cells on a **still-init-escapable** later arrow's ray (so the extension converts it to blocked), then cells on any later arrow's ray, then any empty cell. Each arrow may grow up to 30 cells total. This phase closes the remaining fill gap without touching the construction-time guarantee.
+5. **Verify** by simulating `tryPull(arrowId)` for `id = 0, 1, …, n-1`. If any pull doesn't escape, the algorithm has a model bug — reject loudly. (Should never happen.)
+6. **Sequencing filter**: count how many arrows have an unblocked facing ray in the *initial* state. If too many (`> arrows × min-sequencing`, default 0.5) the level is too trivial — reject.
 
 ### Usage
 
@@ -139,12 +144,14 @@ pnpm --filter @ea/tools generate:reverse -- --w=20 --h=20 --count=5 --min-sequen
 | `--w`, `--h` | 10 × 10 | Grid size. Scales to corpus median (31×38) and beyond. |
 | `--seed` | 1 | PRNG seed (`mulberry32`). Deterministic. |
 | `--count` | 5 | Number of accepted levels to produce. |
-| `--target-fill` | 0.85 | Desired fraction of cells covered. Construction stops when reached. |
+| `--target-fill` | 0.85 | Desired fraction of cells covered. Construction stops when reached (then tail extension may push higher). |
 | `--min-arrow-len` | 3 | Minimum arrow length. |
-| `--max-arrow-len` | 30 | Maximum arrow length. |
+| `--max-arrow-len` | 12 | Construction-time target cap. Tail extension (step 4) can still grow arrows up to 30 cells. Shorter construction = more arrows = denser blocking. |
 | `--max-arrows` | 300 | Hard cap on arrows per level. |
 | `--max-attempts` | 20 | Stop after this × `count` rejected candidates. |
 | `--min-sequencing` | 0.5 | Reject if fraction of *initially* escapable arrows exceeds this. Lower = tighter puzzle (harder to find). |
+| `--ray-bias` | 0.95 | When extending a path, probability of picking a cell already on a preceding arrow's facing ray over any other valid neighbour. High keeps init-escapable count low. |
+| `--straight-bias` | 0.65 | Probability of continuing in the same direction during path extension (applied after ray-bias). |
 | `--out` | (none) | If present (with or without `=<dir>`): write `gen_rev_w{W}h{H}_s{seed}_n{NNN}.json`. Without `--out`, JSONL to stdout. Default dir: `packages/tools/generated/` (gitignored). |
 
 ### Yield
@@ -213,22 +220,22 @@ pnpm --filter @ea/tools quality:eval -- --w=20 --h=20 --count=20 --gen-only
 === 25×31 · generated=30 · corpus=7 · seed=1 ===
 metric                [generated]                               [corpus]
 ──────────────────────────────────────────────────────────────────────────────────────
-arrows                μ    37   med    38   iqr    35–   40    μ    57   med    67   iqr    37–   70
-fill %                μ  63%   med  63%   iqr  59%– 65%        μ  97%   med  97%   iqr  95%– 99%
-init-escapable %      μ  47%   med  48%   iqr  39%– 53%        μ   9%   med   9%   iqr   6%– 11%
-bottleneck %          μ  12%   med  12%   iqr  10%– 15%        μ  25%   med  26%   iqr  21%– 27%
+arrows                μ    63   med    65   iqr    57–   67    μ    57   med    67   iqr    37–   70
+fill %                μ  85%   med  86%   iqr  82%– 89%        μ  97%   med  97%   iqr  95%– 99%
+init-escapable %      μ  30%   med  30%   iqr  26%– 33%        μ   9%   med   9%   iqr   6%– 11%
+bottleneck %          μ  11%   med  11%   iqr  10%– 12%        μ  25%   med  26%   iqr  21%– 27%
 greedy moves/arrow    μ  1.00   med  1.00   iqr  1.00– 1.00    μ  1.00   med  1.00   iqr  1.00– 1.00
-path len p50          μ    12   med    12   iqr    11–   13    μ    10   med     8   iqr     6–   15
-path len p90          μ    25   med    25   iqr    24–   27    μ    33   med    27   iqr    25–   47
+path len p50          μ    10   med    10   iqr     9–   11    μ    10   med     8   iqr     6–   15
+path len p90          μ    19   med    19   iqr    17–   20    μ    33   med    27   iqr    25–   47
 ```
 
 ### How to read the gaps
 
-- **Fill 63 % vs 97 %** — the generator stops well below the corpus density. Lifting it needs algorithm changes (the random walk leaves too many orphan single-cell pockets when target fill is pushed past ~70 %).
-- **Init-escapable 47 % vs 9 %** — nearly half of generated arrows can escape on turn 1, vs. one in ten in the corpus. Tighten with `--min-sequencing=0.2` (or lower) at the cost of more rejections.
-- **Bottleneck 12 % vs 25 %** — corpus levels have twice as many keystone arrows. Likely the same root cause as the fill gap: sparser arrangements have fewer ways to obstruct.
+- **Arrows & path-length p50 — matched.** Construction-time `--max-arrow-len=12` (then tail extension up to 30) lands the count and shape on the corpus median.
+- **Fill 85 % vs 97 %** — still 12pp below the corpus. Tail extension already greedily fills every neighbour it can; the residual gap is empty pockets that no in-place body can reach without breaking solvability. Closing it would need a different construction primitive (e.g. partitioning the grid first, then routing arrows through partitions).
+- **Init-escapable 30 % vs 9 %** — still well above corpus. ~12pp of it is structural (zero-ray anchors: head at edge facing outward, no cell exists for a blocker — they appear because we keep them as a fallback to maintain fill). The remaining ~18pp is "blockable but not blocked": anchors whose body never lands on a preceding arrow's ray. `extendPath` now picks ray-overlapping cells first (`--ray-bias=0.95`), which moved the needle a little but the geometry is still loose. Tightening further with `--min-sequencing=0.2` is possible at the cost of many more rejected attempts.
+- **Bottleneck 11 % vs 25 %** — fewer keystone arrows. Same root cause as init-esc: bodies are not concentrated densely enough on shared chokepoints.
 - **Greedy moves/arrow 1.00 on both sides** — current heuristic can't tell them apart. If you want this metric to discriminate, the generator needs to force re-pulls (e.g., reject any level the verifier solves in `arrows.length` moves flat).
-- **Path-length percentiles match closely** — the `[3, 30]` length window is already in the right zone.
 
 Treat the gaps as the prioritized punch list for the next generator pass. Re-run after each change and look for the deltas to narrow.
 

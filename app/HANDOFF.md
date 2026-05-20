@@ -1,6 +1,6 @@
 # Escape Arrows — Handoff / TODO
 
-> Last advanced 2026-05-20 (P0 + P1 + remaining P3 all cleared; generator now has dev-playground + quality-eval). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
+> Last advanced 2026-05-20 (generator quality-pass: arrow-count / fill / path-len-p50 now match corpus; init-escapable still 21 pp above). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
 
 ---
 
@@ -28,7 +28,7 @@
 - **Procedural level generator** — two algorithms, both written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
     - `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate` — path-partition + greedy/DFS filter. Yields up to 20×20, fails at 30×30. Kept around for comparison.
     - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on.
-    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. Shows where the generator is loose (current snapshot at 25×31: fill 63 % vs 97 %, init-escapable 47 % vs 9 %; greedy moves/arrow tied at 1.00 — heuristic doesn't yet discriminate). Treats those gaps as the next punch list.
+    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. After the 2026-05-20 tuning pass (rayMap-aware path extension + init-esc-aware tail extension + shorter construction-time `maxLen=12`), the 25×31 snapshot is: arrows 63 vs corpus 57 ✓, fill 85 % vs 97 % (gap 12 pp), init-escapable 30 % vs 9 % (gap 21 pp — ~12 pp of it is structural zero-ray anchors), bottleneck 11 % vs 25 %, greedy moves/arrow tied at 1.00 still.
     - **Independent dev-playground** at `packages/web/dev-playground.html` (only served by `pnpm dev:web` — `vite build` ignores it, never ships). Loads everything in `packages/tools/generated/` via `import.meta.glob`. Open at `http://localhost:5173/dev-playground.html`. Empty state if the dir is empty.
     - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus). The dev-playground page is the sanctioned way to play them without touching the production corpus.
 
@@ -75,10 +75,10 @@
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
 
-- **生成器下一步：缩小与正式语料的分布差距**。dev-playground (`packages/web/dev-playground.html`) 和 `quality:eval` 都已经接好（详见 `packages/tools/README.md`），25×31 上一轮对比的几个关键 gap：
-    1. **Fill 63 % vs 97 %**：random walk 在 target fill 推到 70 % 以上会留太多孤立单格。要追上语料密度需要算法改动（比如先 path partition 占满，再在 partition 上跑反向构造排序）。
-    2. **Init-escapable 47 % vs 9 %**：生成关里有近一半箭头第一步就能跑。短期能用 `--min-sequencing=0.2` 缓解（生成会更慢、拒绝率上升）；想再低估计要 placement 阶段直接惩罚 facing 朝向出口的候选。
-    3. **Bottleneck 12 % vs 25 %**：keystone 箭头不够。和 fill 一同根因，更紧密的排布自然有更多互相阻挡。
+- **生成器下一步：缩小与正式语料的分布差距**。2026-05-20 跑了一轮 placement-side 调参（rayMap-aware extendPath / init-esc-aware extendTails / 构造期 `maxLen=12`），把 fill / arrow count 拉近了一大截，但 init-esc 还差不少。25×31 当前对比：
+    1. **Fill 85 % vs 97 %**（前一轮 63 %，已缩窄 22 pp）：剩下的孤立单格 tail-extension 也吃不到，因为继续延伸会破坏更早出栈箭头的 ray。再往上估计得换构造原语（先 partition 占满网格，再排定 escape 顺序）。
+    2. **Init-escapable 30 % vs 9 %**（前一轮 47 %，缩窄 17 pp）：里头大约 12 pp 是 zero-ray 锚（head 紧贴 edge 朝外，没有任何 cell 可以做 blocker——保留它们是为了 fill），算法层面 unblockable。剩下的 ~18 pp 是 "本可被 block 但实际没被 block"——构造 random walk 已经 95 % 优先 rayMap，再压基本只能靠 `--min-sequencing` 滤掉，会大量拒收。
+    3. **Bottleneck 11 % vs 25 %**：keystone 箭头还是不够。和 fill 同根，更紧密的排布自然有更多互相阻挡。
     4. **Greedy moves/arrow 1.00 = 1.00**：当前 heuristic 完全不区分两边。如果要用它当 quality lever，得让生成器主动强制 re-pull（拒绝任何 `tryPull` 一遍跑完 = `arrows.length` 步的关）。
     5. 在 fill / init-esc 两条主线缩短到肉眼接近之前，**不要**把生成关接进正式 picker / `levels_data/`。可以先把样本扔进 dev-playground 让人主观盲测打分。
 - **生成器：`min-sequencing` 之外的更精细 "fun" 指标**。`packages/tools/README.md` §"What about quality / 'fun'?"列了几个候选（greedy heuristic gap / bottleneck arrow / path-length distribution），都没接。
