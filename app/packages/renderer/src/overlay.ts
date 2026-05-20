@@ -44,28 +44,22 @@ export function drawWinOverlay(
   const btnY = btnTargetY + (1 - btnP) * minSide * 0.04;
   const btnX = cx - btnW / 2;
 
-  // 2) Tight emerald halo behind the title — subtle, tints the area without
-  // becoming the dominant element.
-  if (backdropP > 0) {
-    ctx.globalAlpha = backdropP * 0.18;
-    ctx.fillStyle = "#10b981";
-    fillCircle(ctx, cx, titleY, minSide * 0.22);
-    ctx.globalAlpha = 1;
-  }
-
-  // 3) Particle burst — small triangle arrows radiating outward, each
-  //    rotated to point along its travel direction. Colors come from the
-  //    in-game palette so the burst looks like the level's arrows escaping
-  //    together. Eases out to peak radius then fades.
+  // 2) Particle burst — small triangle arrows radiating outward. Angles,
+  //    radii, and sizes use a stable hash-based jitter so the layout reads
+  //    as a real burst (not a metronome wheel) without flickering between
+  //    frames. Colors come from the in-game palette.
   if (burstFade > 0.02) {
-    const maxR = minSide * 0.46;
-    const particles = 14;
+    const maxR = minSide * 0.48;
+    const particles = 16;
     for (let i = 0; i < particles; i++) {
-      const a = (i / particles) * Math.PI * 2 + 0.18;
-      const r = maxR * burstIn;
+      const angleJitter = (hash01(i * 3 + 1) - 0.5) * 0.48;
+      const a = (i / particles) * Math.PI * 2 + angleJitter;
+      const radiusScale = 0.55 + hash01(i * 3 + 2) * 0.55;
+      const r = maxR * burstIn * radiusScale;
       const px = cx + Math.cos(a) * r;
       const py = titleY + Math.sin(a) * r;
-      const sz = minSide * 0.034 * burstFade;
+      const sizeScale = 0.7 + hash01(i * 3 + 3) * 0.7;
+      const sz = minSide * 0.030 * burstFade * sizeScale;
       if (sz < 1) continue;
       ctx.globalAlpha = burstFade;
       drawArrowParticle(ctx, px, py, a, sz, colorFor(i));
@@ -73,27 +67,27 @@ export function drawWinOverlay(
     ctx.globalAlpha = 1;
   }
 
-  // 4) Title with scale-pop animation.
+  // 3) Title — slate-50 on the dimmed backdrop. No halo behind it; the
+  //    contrast against the dark backdrop is enough. A single-pixel shadow
+  //    grounds the text without looking like a hand-drawn double stroke.
   if (titleP > 0.02) {
     ctx.save();
     ctx.translate(cx, titleY);
-    const scale = titleP;
-    ctx.scale(scale, scale);
+    ctx.scale(titleP, titleP);
     const titleSize = Math.floor(minSide * 0.14);
     ctx.font = `bold ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.globalAlpha = clamp01(titleP);
-    // Subtle dark shadow for contrast (drawn first, slightly offset).
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillText("通关！", 2, 3 + cjkBaselineNudge(titleSize));
-    ctx.fillStyle = "#34d399";
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillText("通关！", 1, 1 + cjkBaselineNudge(titleSize));
+    ctx.fillStyle = "#f8fafc";
     ctx.fillText("通关！", 0, cjkBaselineNudge(titleSize));
     ctx.globalAlpha = 1;
     ctx.restore();
   }
 
-  // 5) Pill button — drop shadow + rounded body + centered label.
+  // 4) Pill button — drop shadow + rounded body + centered label.
   if (btnP > 0.01) {
     ctx.globalAlpha = btnP;
     const radius = btnH / 2;
@@ -125,10 +119,13 @@ function cjkBaselineNudge(fontSize: number): number {
   return Math.round(fontSize * 0.06);
 }
 
-function fillCircle(ctx: DrawCtx, cx: number, cy: number, r: number): void {
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
+// Deterministic [0, 1) pseudo-random from an integer seed. Used so per-frame
+// particle jitter stays stable instead of flickering each redraw.
+function hash01(n: number): number {
+  let x = (n + 0x6d2b79f5) | 0;
+  x = Math.imul(x ^ (x >>> 15), x | 1);
+  x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+  return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
 }
 
 function fillRoundedRect(
