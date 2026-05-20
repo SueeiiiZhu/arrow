@@ -97,23 +97,13 @@ export function drawWinOverlay(
     // Button body.
     fillRoundedRect(ctx, btnX, btnY, btnW, btnH, radius, "#10b981");
 
-    // Label — pure CJK so it sits perfectly on the button's vertical axis;
-    // the ▶ marker is drawn separately at a fixed right-side inset and does
-    // not participate in centering.
+    // Label — pure CJK, perfectly centered.
     const labelSize = Math.floor(btnH * 0.4);
     ctx.font = `bold ${labelSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#ffffff";
     ctx.fillText("下一关", cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
-
-    // Right-side ▶ marker — fixed inset, smaller than label so it reads as a
-    // hint rather than competing with the text.
-    const markerSize = Math.floor(labelSize * 0.7);
-    const markerInset = Math.round(btnH * 0.42);
-    ctx.font = `bold ${markerSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
-    ctx.textAlign = "right";
-    ctx.fillText("▶", btnX + btnW - markerInset, btnY + btnH / 2);
     ctx.globalAlpha = 1;
   }
 
