@@ -37,9 +37,9 @@ export function drawWinOverlay(
   ctx.fillRect(0, 0, canvasW, canvasH);
   ctx.globalAlpha = 1;
 
-  const titleY = cy - minSide * 0.10;
+  const titleY = cy - minSide * 0.1;
   const btnW = Math.min(Math.max(canvasW * 0.55, 220), 320);
-  const btnH = Math.max(54, Math.round(minSide * 0.10));
+  const btnH = Math.max(54, Math.round(minSide * 0.1));
   const btnTargetY = cy + minSide * 0.08;
   const btnY = btnTargetY + (1 - btnP) * minSide * 0.04;
   const btnX = cx - btnW / 2;
@@ -59,7 +59,7 @@ export function drawWinOverlay(
       const px = cx + Math.cos(a) * r;
       const py = titleY + Math.sin(a) * r;
       const sizeScale = 0.7 + hash01(i * 3 + 3) * 0.7;
-      const sz = minSide * 0.030 * burstFade * sizeScale;
+      const sz = minSide * 0.03 * burstFade * sizeScale;
       if (sz < 1) continue;
       ctx.globalAlpha = burstFade;
       drawArrowParticle(ctx, px, py, a, sz, colorFor(i));
@@ -67,22 +67,23 @@ export function drawWinOverlay(
     ctx.globalAlpha = 1;
   }
 
-  // 3) Title — slate-50 on the dimmed backdrop. No halo behind it; the
-  //    contrast against the dark backdrop is enough. A single-pixel shadow
-  //    grounds the text without looking like a hand-drawn double stroke.
+  // 3) Title — slate-50 on the dimmed backdrop. Pure CJK so textAlign="center"
+  //    actually centers the visual ink; trailing punctuation like "！" would
+  //    shift the geometric center off the visual one, breaking alignment with
+  //    the button below.
   if (titleP > 0.02) {
     ctx.save();
     ctx.translate(cx, titleY);
     ctx.scale(titleP, titleP);
-    const titleSize = Math.floor(minSide * 0.14);
+    const titleSize = Math.floor(minSide * 0.16);
     ctx.font = `bold ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.globalAlpha = clamp01(titleP);
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillText("通关！", 1, 1 + cjkBaselineNudge(titleSize));
+    ctx.fillText("通关", 1, 1 + cjkBaselineNudge(titleSize));
     ctx.fillStyle = "#f8fafc";
-    ctx.fillText("通关！", 0, cjkBaselineNudge(titleSize));
+    ctx.fillText("通关", 0, cjkBaselineNudge(titleSize));
     ctx.globalAlpha = 1;
     ctx.restore();
   }
@@ -96,15 +97,23 @@ export function drawWinOverlay(
     // Button body.
     fillRoundedRect(ctx, btnX, btnY, btnW, btnH, radius, "#10b981");
 
-    // Label.
-    const labelSize = Math.floor(btnH * 0.40);
+    // Label — pure CJK so it sits perfectly on the button's vertical axis;
+    // the ▶ marker is drawn separately at a fixed right-side inset and does
+    // not participate in centering.
+    const labelSize = Math.floor(btnH * 0.4);
     ctx.font = `bold ${labelSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#ffffff";
-    // The visual centre of CJK glyphs sits slightly above the metric middle
-    // baseline; nudge a few percent down so the text reads as centred.
-    ctx.fillText("下一关 ▶", cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
+    ctx.fillText("下一关", cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
+
+    // Right-side ▶ marker — fixed inset, smaller than label so it reads as a
+    // hint rather than competing with the text.
+    const markerSize = Math.floor(labelSize * 0.7);
+    const markerInset = Math.round(btnH * 0.42);
+    ctx.font = `bold ${markerSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = "right";
+    ctx.fillText("▶", btnX + btnW - markerInset, btnY + btnH / 2);
     ctx.globalAlpha = 1;
   }
 
@@ -199,7 +208,7 @@ function easeIn(t: number): number {
 function easeOutBack(t: number): number {
   const c1 = 1.70158;
   const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
 }
 
 export function hitTestOverlay(hit: OverlayHitbox, x: number, y: number): "next" | null {
