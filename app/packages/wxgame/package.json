@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@ea/core": "workspace:*",
+    "@ea/lives": "workspace:*",
     "@ea/renderer": "workspace:*"
   },
   "devDependencies": {

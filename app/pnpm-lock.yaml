@@ -17,6 +17,8 @@ importers:
 
   packages/core: {}
 
+  packages/lives: {}
+
   packages/renderer:
     dependencies:
       '@ea/core':
@@ -34,6 +36,9 @@ importers:
       '@ea/core':
         specifier: workspace:*
         version: link:../core
+      '@ea/lives':
+        specifier: workspace:*
+        version: link:../lives
       '@ea/renderer':
         specifier: workspace:*
         version: link:../renderer
@@ -47,6 +52,9 @@ importers:
       '@ea/core':
         specifier: workspace:*
         version: link:../core
+      '@ea/lives':
+        specifier: workspace:*
+        version: link:../lives
       '@ea/renderer':
         specifier: workspace:*
         version: link:../renderer

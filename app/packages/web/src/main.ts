@@ -23,6 +23,15 @@ import {
   pickCell,
   type Synth,
 } from "@ea/renderer";
+import {
+  addLives,
+  getConfig as getLivesConfig,
+  getState as getLivesState,
+  nextRegenMs,
+  subscribe as subscribeLives,
+  tickNow as tickLives,
+  tryConsume as tryConsumeLife,
+} from "./lives-store.js";
 
 // --- animation state ---------------------------------------------------------
 
@@ -202,6 +211,13 @@ const nextBtn = document.getElementById("next-btn") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset-btn") as HTMLButtonElement;
 const canvas = document.getElementById("board") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+
+const livesHearts = document.getElementById("lives-hearts") as HTMLSpanElement;
+const livesTimer = document.getElementById("lives-timer") as HTMLSpanElement;
+const noLivesDialog = document.getElementById("no-lives-dialog") as HTMLDivElement;
+const nlTimer = document.getElementById("nl-timer") as HTMLParagraphElement;
+const nlAdBtn = document.getElementById("nl-ad-btn") as HTMLButtonElement;
+const nlCloseBtn = document.getElementById("nl-close-btn") as HTMLButtonElement;
 
 const pickerBtn = document.getElementById("picker-btn") as HTMLButtonElement;
 const pickerLabel = document.getElementById("picker-label") as HTMLSpanElement;
@@ -472,6 +488,10 @@ nextBtn.addEventListener("click", () => {
 });
 resetBtn.addEventListener("click", () => {
   if (!game) return;
+  if (!tryConsumeLife()) {
+    openNoLivesDialog();
+    return;
+  }
   resetGame(game);
   clearAnimations();
   winStart = null;
@@ -500,6 +520,57 @@ canvas.addEventListener(
   },
   { passive: false },
 );
+
+// --- lives UI ---------------------------------------------------------------
+
+const HEART_FULL = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#ef4444" stroke="#7f1d1d" stroke-width="1.2" stroke-linejoin="round" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
+const HEART_EMPTY = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="#475569" stroke-width="1.4" stroke-linejoin="round" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
+
+function formatMs(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function renderLives(): void {
+  tickLives();
+  const { lives } = getLivesState();
+  const { max } = getLivesConfig();
+  const hearts: string[] = [];
+  for (let i = 0; i < max; i++) {
+    hearts.push(`<span class="heart">${i < lives ? HEART_FULL : HEART_EMPTY}</span>`);
+  }
+  livesHearts.innerHTML = hearts.join("");
+  const ms = nextRegenMs();
+  livesTimer.textContent = ms == null ? "" : formatMs(ms);
+  if (!noLivesDialog.hidden) {
+    if (ms == null) nlTimer.textContent = "已恢复";
+    else nlTimer.textContent = formatMs(ms);
+    if (lives > 0) closeNoLivesDialog();
+  }
+}
+
+function openNoLivesDialog(): void {
+  noLivesDialog.hidden = false;
+  renderLives();
+}
+function closeNoLivesDialog(): void {
+  noLivesDialog.hidden = true;
+}
+
+nlAdBtn.addEventListener("click", () => {
+  // Web has no rewarded ad — simulate the reward directly so the flow is
+  // exercised. wxgame plugs in createRewardedVideoAd.
+  addLives(1);
+  closeNoLivesDialog();
+  renderLives();
+});
+nlCloseBtn.addEventListener("click", closeNoLivesDialog);
+
+subscribeLives(renderLives);
+setInterval(renderLives, 1000);
+renderLives();
 
 buildTagChips();
 

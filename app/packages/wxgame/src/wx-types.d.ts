@@ -83,6 +83,21 @@ interface WxAPI {
   // Subpackage loading. The subpackage's `entry` file (configured in
   // game.json) auto-executes on success.
   loadSubpackage(opts: WxLoadSubpackageOpts): WxLoadSubpackageTask;
+  // Rewarded video ad (optional — only present when the developer has
+  // configured an ad unit in mp.weixin.qq.com). We handle absence.
+  createRewardedVideoAd?(opts: { adUnitId: string }): WxRewardedVideoAd;
+}
+
+interface WxRewardedVideoAd {
+  load(): Promise<void>;
+  show(): Promise<void>;
+  onLoad(cb: () => void): void;
+  offLoad(cb: () => void): void;
+  onError(cb: (e: { errMsg: string; errCode: number }) => void): void;
+  offError(cb: (e: { errMsg: string; errCode: number }) => void): void;
+  onClose(cb: (e: { isEnded: boolean }) => void): void;
+  offClose(cb: (e: { isEnded: boolean }) => void): void;
+  destroy(): void;
 }
 
 declare const wx: WxAPI;

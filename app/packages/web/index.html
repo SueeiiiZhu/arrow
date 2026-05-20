@@ -37,6 +37,25 @@
       .picker-row .picker-meta { font-size: 11px; opacity: 0.6; white-space: nowrap; }
       .picker-row .picker-done { color: #22c55e; min-width: 14px; }
       .picker-more { padding: 14px; text-align: center; font-size: 12px; opacity: 0.7; }
+
+      #lives { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #0f172a; border: 1px solid #334155; border-radius: 20px; font-size: 13px; font-variant-numeric: tabular-nums; }
+      #lives-hearts { display: flex; gap: 2px; }
+      .heart { width: 16px; height: 16px; display: inline-block; }
+      .heart svg { display: block; }
+      #lives-timer { font-size: 11px; color: #94a3b8; min-width: 38px; text-align: right; }
+
+      #no-lives-dialog { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(15,23,42,0.78); }
+      #no-lives-dialog[hidden] { display: none; }
+      .nl-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 28px; width: min(360px, calc(100% - 32px)); text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+      .nl-title { font-size: 18px; font-weight: 600; margin: 0 0 6px; color: #f8fafc; }
+      .nl-sub { font-size: 13px; color: #94a3b8; margin: 0 0 18px; line-height: 1.5; }
+      .nl-timer { font-size: 24px; font-variant-numeric: tabular-nums; color: #f1f5f9; margin: 4px 0 18px; letter-spacing: 1px; }
+      .nl-actions { display: flex; flex-direction: column; gap: 8px; }
+      .nl-actions button { width: 100%; padding: 10px 14px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; }
+      #nl-ad-btn { background: #22c55e; color: white; font-weight: 600; }
+      #nl-ad-btn:hover { background: #16a34a; }
+      #nl-close-btn { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+      #nl-close-btn:hover { background: #0f172a; color: #e2e8f0; }
     </style>
   </head>
   <body>
@@ -48,12 +67,27 @@
         <button id="next-btn">下一关 ›</button>
         <button id="reset-btn">重开</button>
         <span id="meta" style="opacity:0.7;font-size:12px;"></span>
-        <span id="status" style="font-size:13px;font-weight:600;margin-left:auto;"></span>
+        <span id="lives" style="margin-left:auto;">
+          <span id="lives-hearts"></span>
+          <span id="lives-timer"></span>
+        </span>
+        <span id="status" style="font-size:13px;font-weight:600;"></span>
       </header>
       <main>
         <canvas id="board"></canvas>
         <div class="info">点箭头拉出，被挡住会停下。规则为反编译推断版。</div>
       </main>
+    </div>
+    <div id="no-lives-dialog" hidden>
+      <div class="nl-card">
+        <p class="nl-title">心已用光</p>
+        <p class="nl-sub">等待心数自动恢复，或看一个广告免费补 1 颗。</p>
+        <p class="nl-timer" id="nl-timer">--:--</p>
+        <div class="nl-actions">
+          <button id="nl-ad-btn">看广告 +1 心</button>
+          <button id="nl-close-btn">稍后再来</button>
+        </div>
+      </div>
     </div>
     <div id="picker-panel" hidden>
       <div class="picker-head">

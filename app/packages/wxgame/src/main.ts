@@ -30,6 +30,14 @@ import {
   type MainLevel,
   PACK_COUNT,
 } from "./levels.generated.js";
+import {
+  addLives,
+  getConfig as getLivesConfig,
+  getState as getLivesState,
+  nextRegenMs,
+  tickNow as tickLives,
+  tryConsume as tryConsumeLife,
+} from "./lives-store.js";
 
 const STORAGE_KEY = "escape_arrows_progress";
 
@@ -221,7 +229,13 @@ function ensureRAF(): void {
   const step = (): void => {
     rafId = 0;
     render();
-    if (tweens.size > 0 || shakes.size > 0 || isWinAnimating() || loadingKey != null) {
+    if (
+      tweens.size > 0 ||
+      shakes.size > 0 ||
+      isWinAnimating() ||
+      loadingKey != null ||
+      noLivesOpen
+    ) {
       rafId = requestAnimationFrame(step);
     }
   };
@@ -255,6 +269,51 @@ let winStart: number | null = null;
 let winHitbox: OverlayHitbox | null = null;
 function isWinAnimating(): boolean {
   return winStart != null && performance.now() - winStart < 700;
+}
+
+// --- no-lives overlay -----------------------------------------------------
+
+let noLivesOpen = false;
+interface NoLivesHitbox {
+  ad: { x: number; y: number; w: number; h: number };
+  close: { x: number; y: number; w: number; h: number };
+}
+let noLivesHitbox: NoLivesHitbox | null = null;
+
+// Replace with your own ad unit ID before submitting to mp.weixin.qq.com.
+// `wx.createRewardedVideoAd` is absent in devtool / older clients — we then
+// fall back to refilling 1 immediately so the flow is still exercisable.
+const REWARDED_AD_UNIT_ID = "";
+
+function tryAdRefill(): void {
+  const create = wx.createRewardedVideoAd;
+  if (!create || !REWARDED_AD_UNIT_ID) {
+    addLives(1);
+    noLivesOpen = false;
+    ensureRAF();
+    render();
+    return;
+  }
+  const ad = create({ adUnitId: REWARDED_AD_UNIT_ID });
+  const onClose = (e: { isEnded: boolean }): void => {
+    if (e.isEnded) {
+      addLives(1);
+      noLivesOpen = false;
+    }
+    ad.offClose(onClose);
+    ad.destroy();
+    ensureRAF();
+    render();
+  };
+  ad.onClose(onClose);
+  ad.show().catch(() => {
+    ad.load()
+      .then(() => ad.show())
+      .catch(() => {
+        ad.offClose(onClose);
+        ad.destroy();
+      });
+  });
 }
 
 // --- level selection ------------------------------------------------------
@@ -334,9 +393,63 @@ function render(): void {
   } else if (game && game.status === "won" && winStart != null) {
     const phase = (performance.now() - winStart) / 1000;
     winHitbox = drawWinOverlay(ctx as any, cssW, cssH, phase);
-    return;
   } else {
     winHitbox = null;
+  }
+
+  if (noLivesOpen) {
+    noLivesHitbox = drawNoLivesOverlay();
+  } else {
+    noLivesHitbox = null;
+  }
+}
+
+function drawHeart(cx: number, cy: number, r: number, filled: boolean): void {
+  // Two-arc + V-shape heart. Pure path so it works with the minimal
+  // WxCanvasRenderingContext2D surface.
+  ctx.beginPath();
+  ctx.arc(cx - r * 0.45, cy - r * 0.15, r * 0.45, 0, Math.PI * 2);
+  ctx.arc(cx + r * 0.45, cy - r * 0.15, r * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.9, cy - r * 0.1);
+  ctx.lineTo(cx, cy + r * 0.85);
+  ctx.lineTo(cx + r * 0.9, cy - r * 0.1);
+  ctx.closePath();
+  if (filled) {
+    ctx.fill();
+  } else {
+    ctx.stroke();
+  }
+}
+
+function drawHearts(centerX: number, centerY: number): void {
+  tickLives();
+  const { lives } = getLivesState();
+  const { max } = getLivesConfig();
+  const r = 9;
+  const gap = 4;
+  const slotW = r * 2 + gap;
+  const totalW = max * slotW - gap;
+  const startX = centerX - totalW / 2;
+  for (let i = 0; i < max; i++) {
+    const x = startX + i * slotW + r;
+    if (i < lives) {
+      ctx.fillStyle = "#ef4444";
+      drawHeart(x, centerY, r, true);
+    } else {
+      ctx.strokeStyle = "#475569";
+      ctx.lineWidth = 1.5;
+      drawHeart(x, centerY, r, false);
+    }
+  }
+  const ms = nextRegenMs();
+  if (ms != null) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(formatMs(ms), startX + totalW + 6, centerY + 1);
   }
 }
 
@@ -351,10 +464,13 @@ function drawHud(): void {
   const name = key.replace(/^\d+__/, "").replace(/\.json$/, "");
   ctx.fillText(`${levelIndex + 1}/${ALL_KEYS.length}  ${name}`, 12, 28);
 
+  drawHearts(cssW / 2, 28);
+
   if (game) {
     const remaining = game.arrows.filter((a) => !a.escaped).length;
     ctx.textAlign = "right";
     ctx.fillStyle = game.status === "won" ? "#22c55e" : "#e2e8f0";
+    ctx.font = "16px sans-serif";
     ctx.fillText(
       game.status === "won" ? "通关！" : `剩余 ${remaining}/${game.arrows.length}`,
       cssW - 12,
@@ -363,8 +479,76 @@ function drawHud(): void {
   } else if (loadingKey != null) {
     ctx.textAlign = "right";
     ctx.fillStyle = "#94a3b8";
+    ctx.font = "16px sans-serif";
     ctx.fillText("加载中...", cssW - 12, 28);
   }
+}
+
+function formatMs(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function drawNoLivesOverlay(): NoLivesHitbox {
+  ctx.fillStyle = "rgba(15,23,42,0.78)";
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const cardW = Math.min(320, cssW - 48);
+  const cardH = 240;
+  const cardX = (cssW - cardW) / 2;
+  const cardY = (cssH - cardH) / 2;
+
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(cardX, cardY, cardW, cardH);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "bold 18px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("心已用光", cardX + cardW / 2, cardY + 36);
+
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "13px sans-serif";
+  ctx.fillText("等待恢复，或看广告 +1", cardX + cardW / 2, cardY + 64);
+
+  tickLives();
+  const ms = nextRegenMs();
+  ctx.fillStyle = "#f1f5f9";
+  ctx.font = "24px sans-serif";
+  ctx.fillText(ms == null ? "已恢复" : formatMs(ms), cardX + cardW / 2, cardY + 108);
+
+  const btnW = cardW - 40;
+  const btnH = 40;
+  const adX = cardX + (cardW - btnW) / 2;
+  const adY = cardY + 140;
+  ctx.fillStyle = "#22c55e";
+  ctx.fillRect(adX, adY, btnW, btnH);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 15px sans-serif";
+  ctx.fillText("看广告 +1 心", cardX + cardW / 2, adY + btnH / 2);
+
+  const closeY = adY + btnH + 10;
+  ctx.strokeStyle = "#334155";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(adX, closeY, btnW, btnH);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "14px sans-serif";
+  ctx.fillText("稍后再来", cardX + cardW / 2, closeY + btnH / 2);
+
+  return {
+    ad: { x: adX, y: adY, w: btnW, h: btnH },
+    close: { x: adX, y: closeY, w: btnW, h: btnH },
+  };
+}
+
+function pointInRect(
+  px: number,
+  py: number,
+  r: { x: number; y: number; w: number; h: number },
+): boolean {
+  return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
 
 function drawLoadingOverlay(): void {
@@ -396,6 +580,18 @@ wx.onTouchStart((e: WxTouchEvent) => {
 
   if (loadingKey != null) return;
 
+  if (noLivesOpen && noLivesHitbox) {
+    if (pointInRect(px, py, noLivesHitbox.ad)) {
+      synth.click();
+      tryAdRefill();
+    } else if (pointInRect(px, py, noLivesHitbox.close)) {
+      synth.click();
+      noLivesOpen = false;
+      render();
+    }
+    return;
+  }
+
   if (game && game.status === "won" && winHitbox) {
     const hit = hitTestOverlay(winHitbox, px, py);
     if (hit === "next") {
@@ -415,12 +611,17 @@ wx.onTouchStart((e: WxTouchEvent) => {
     return;
   }
   if (hud === "reset") {
-    if (game) {
-      resetGame(game);
-      clearAnimations();
-      winStart = null;
+    if (!game) return;
+    if (!tryConsumeLife()) {
+      noLivesOpen = true;
+      ensureRAF();
       render();
+      return;
     }
+    resetGame(game);
+    clearAnimations();
+    winStart = null;
+    render();
     return;
   }
 
