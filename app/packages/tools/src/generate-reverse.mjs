@@ -41,12 +41,18 @@
 //                      escapable count low)
 //   --straight-bias    prob. of continuing in the same direction during path
 //                      extension (default 0.65)
+//   --max-deadlock-rate  reject if more than this fraction of random "any
+//                      movable" rollouts end stuck (default 0.05). Catches
+//                      levels where partial pulls can softlock the player
+//                      even though a full solution exists.
+//   --rollout-trials   number of rollouts per candidate for the deadlock
+//                      probe (default 100)
 //   --out              output dir, or stdout JSONL if omitted
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame, loadLevel, tryPull } from "./_solver.mjs";
+import { createGame, loadLevel, restore, snapshot, tryPull } from "./_solver.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT = resolve(__dirname, "../generated");
@@ -451,6 +457,50 @@ function countInitialEscapable(raw) {
   return count;
 }
 
+// Realistic-rollout deadlock probe. The construction guarantees a solution
+// exists, but a human player may pull an arrow that only partially advances
+// (head bumps a body mid-path). Once those partial pulls accumulate, the
+// state can become unreachable for any escape order — the game becomes
+// "softlocked" even though it was solvable from the start.
+//
+// We model the worst kind of player: at each step pick UNIFORMLY among all
+// arrows that move at all (including partials). If a non-trivial fraction
+// of rollouts ends with some arrows permanently stuck, the level is
+// player-hostile and we reject it.
+function deadlockRate(raw, trials, rand) {
+  const data = loadLevel(raw);
+  const state = createGame(data);
+  let deadlocks = 0;
+  for (let t = 0; t < trials; t++) {
+    // Reset state.
+    for (let i = 0; i < state.arrows.length; i++) {
+      state.arrows[i].escaped = false;
+      state.arrows[i].progress = 0;
+    }
+    state.status = "playing";
+
+    while (true) {
+      const movable = [];
+      for (let i = 0; i < state.arrows.length; i++) {
+        if (state.arrows[i].escaped) continue;
+        const snap = snapshot(state);
+        const r = tryPull(state, i);
+        const moved = r.steps > 0 || r.escaped;
+        restore(state, snap);
+        if (moved) movable.push(i);
+      }
+      if (movable.length === 0) {
+        const stuck = state.arrows.some((a) => !a.escaped);
+        if (stuck) deadlocks++;
+        break;
+      }
+      const pick = movable[Math.floor(rand() * movable.length)];
+      tryPull(state, pick);
+    }
+  }
+  return deadlocks / trials;
+}
+
 // --- CLI -------------------------------------------------------------------
 
 function parseArgs(argv) {
@@ -475,6 +525,8 @@ const maxAttempts = Number(args["max-attempts"] ?? 20);
 const minSequencing = Number(args["min-sequencing"] ?? 0.5);
 const rayBias = Number(args["ray-bias"] ?? 0.95);
 const straightBias = Number(args["straight-bias"] ?? 0.65);
+const maxDeadlockRate = Number(args["max-deadlock-rate"] ?? 0.05);
+const rolloutTrials = Number(args["rollout-trials"] ?? 100);
 const outDir =
   args.out === undefined ? null : args.out === "true" ? DEFAULT_OUT : resolve(args.out);
 
@@ -493,6 +545,7 @@ const rejects = {
   "too few arrows": 0,
   "verify failed (BUG)": 0,
   "too trivial (low sequencing)": 0,
+  "player-hostile (high deadlock rate)": 0,
 };
 
 while (produced < count && attempts < maxAttempts * count) {
@@ -516,9 +569,16 @@ while (produced < count && attempts < maxAttempts * count) {
     rejects["too trivial (low sequencing)"]++;
     continue;
   }
+  // Deterministic per-candidate seed so the deadlock probe is reproducible.
+  const probeRand = mulberry32(baseSeed * 7919 + attempts);
+  const dlRate = deadlockRate(raw, rolloutTrials, probeRand);
+  if (dlRate > maxDeadlockRate) {
+    rejects["player-hostile (high deadlock rate)"]++;
+    continue;
+  }
   produced++;
   const label = `gen_rev_w${W}h${H}_s${baseSeed}_n${String(produced).padStart(3, "0")}`;
-  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length}`;
+  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length} deadlockRate=${(dlRate * 100).toFixed(1)}%`;
   if (outDir) {
     const fpath = resolve(outDir, `${label}.json`);
     writeFileSync(fpath, JSON.stringify(raw));
