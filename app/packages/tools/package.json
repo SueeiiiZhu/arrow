@@ -11,6 +11,7 @@
     "stat:corpus": "node src/stat-corpus.mjs",
     "generate": "pnpm prebuild:core && node src/generate.mjs",
     "generate:reverse": "pnpm prebuild:core && node src/generate-reverse.mjs",
+    "generate:partition": "pnpm prebuild:core && node src/generate-partition.mjs",
     "quality:eval": "pnpm prebuild:core && node src/quality-eval.mjs",
     "typecheck": "echo 'no ts in tools package'"
   },

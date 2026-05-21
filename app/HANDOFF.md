@@ -1,6 +1,6 @@
 # Escape Arrows — Handoff / TODO
 
-> Last advanced 2026-05-20 (generator quality-pass: arrow-count / fill / path-len-p50 now match corpus; init-escapable still 21 pp above). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
+> Last advanced 2026-05-21 (level-order shuffle + `--preset=strict` for reverse generator + partition-first v0 documented as **null result** — same chainDepth/bottleneck/fill as reverse). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
 
 ---
 
@@ -26,10 +26,11 @@
 - H5 production build: chunked compact-pack pipeline mirrors wxgame. `packages/web/scripts/build-levels.mjs` (predev/prebuild step) emits `src/levels.generated.ts` (`MAIN_LEVELS` = first 30 levels embedded, `ALL_KEYS` + `KEY_TO_LOC` covers all 3548) plus `public/packs/pack{0..11}.json` (≈1.3 MB each). At runtime the picker shows everything immediately, and selecting a level outside the main 30 fetches the matching pack on demand (Map-cached). Vite build no longer OOMs (288ms, 528 KB JS).
 - `.gitignore`: app/ now has its own (`node_modules/`, all `dist/`, `*.tsbuildinfo`, `packages/wxgame/src/levels.generated.ts`, `packages/tools/generated/`, IDE / cache). Parent `../.gitignore` was the original gatekeeper (only `/app` is whitelisted, plus newly added `!/.github`); the generated `levels.generated.ts` was previously tracked by mistake and has been removed from the index.
 - Corpus statistics dump (`packages/tools/src/stat-corpus.mjs`, `pnpm --filter @ea/tools stat:corpus`): grid sizes, arrow counts, snake lengths, corner counts, fill density, facing distribution, tag histogram across all 3548 levels. Key findings: median 31×38 grid, 81 arrows, 96% fill density, p50 snake length 7, only 9.9% of heads on the border. Drove the design of the procedural generator below.
-- **Procedural level generator** — two algorithms, both written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
+- **Procedural level generator** — three algorithms, all written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
     - `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate` — path-partition + greedy/DFS filter. Yields up to 20×20, fails at 30×30. Kept around for comparison.
-    - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on.
-    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. After the 2026-05-20 tuning pass (rayMap-aware path extension + init-esc-aware tail extension + shorter construction-time `maxLen=12`), the 25×31 snapshot is: arrows 63 vs corpus 57 ✓, fill 85 % vs 97 % (gap 12 pp), init-escapable 30 % vs 9 % (gap 21 pp — ~12 pp of it is structural zero-ray anchors), bottleneck 11 % vs 25 %, greedy moves/arrow tied at 1.00 still.
+    - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on. Now has `--preset=strict` (chainDepth ≥ 8, bottleneck ≥ 15 %, 120 attempts/level) which pushes a batch ~1 σ closer to corpus at ~5× the cost.
+    - `packages/tools/src/generate-partition.mjs` + `pnpm --filter @ea/tools generate:partition` — **chain-skeleton variant** on top of reverse. **Honest v0 result (2026-05-21): TIES `generate-reverse` on every structural metric** (chainDepth med 7 vs 7, bottleneck 11 % vs 12 %, fill 85 % vs 85 % at 25×31). The chain-skeleton phase is a local geometric operation; once we exit it the filler reuses the same `placeOne` logic and the distribution converges. Cranking `--target-fill` past 0.85 doesn't help either — the reverse-construction primitive has a topological cap. Kept committed as an experiment scaffold + the `quality:eval --from-dir` flag is generally useful. A genuine partition-then-topo-sort generator (v1) is still unwritten.
+    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. Now also accepts `--from-dir=<dir>` to evaluate any external generator. 25×31 snapshot (2026-05-21): both reverse + partition sit at arrows 64 vs corpus 57, fill 85 % vs 97 %, init-escapable 30 % vs 9 %, bottleneck 11 % vs 26 %, chainDepth 7 vs 10. greedy moves/arrow tied at 1.00 (snake-walk single-shot always solves on both sides).
     - **Independent dev-playground** at `packages/web/dev-playground.html` (only served by `pnpm dev:web` — `vite build` ignores it, never ships). Loads everything in `packages/tools/generated/` via `import.meta.glob`. Open at `http://localhost:5173/dev-playground.html`. Empty state if the dir is empty.
     - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus). The dev-playground page is the sanctioned way to play them without touching the production corpus.
 
@@ -49,7 +50,7 @@
 | Compact level encoder / chunker (shared) | `packages/wxgame/scripts/_encode.mjs` |
 | Compact → RawLevelFile decoder (shared) | `packages/core/src/compact.ts` (`decodeCompact`) |
 | Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
-| Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended). Output to gitignored `packages/tools/generated/`. |
+| Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended) + `packages/tools/src/generate-partition.mjs` (chain-skeleton v0 — null result, see HANDOFF). Output to gitignored `packages/tools/generated/`. |
 | Generated-level dev playground | `packages/web/dev-playground.html` + `packages/web/src/dev-playground.ts` (dev server only). |
 | Generator quality eval | `packages/tools/src/quality-eval.mjs`. |
 | Biome config (format + lint) | `biome.json` |
@@ -76,13 +77,14 @@
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
 
-- **生成器下一步：缩小与正式语料的分布差距**。2026-05-20 跑了一轮 placement-side 调参（rayMap-aware extendPath / init-esc-aware extendTails / 构造期 `maxLen=12`），把 fill / arrow count 拉近了一大截，但 init-esc 还差不少。25×31 当前对比：
-    1. **Fill 85 % vs 97 %**（前一轮 63 %，已缩窄 22 pp）：剩下的孤立单格 tail-extension 也吃不到，因为继续延伸会破坏更早出栈箭头的 ray。再往上估计得换构造原语（先 partition 占满网格，再排定 escape 顺序）。
-    2. **Init-escapable 30 % vs 9 %**（前一轮 47 %，缩窄 17 pp）：里头大约 12 pp 是 zero-ray 锚（head 紧贴 edge 朝外，没有任何 cell 可以做 blocker——保留它们是为了 fill），算法层面 unblockable。剩下的 ~18 pp 是 "本可被 block 但实际没被 block"——构造 random walk 已经 95 % 优先 rayMap，再压基本只能靠 `--min-sequencing` 滤掉，会大量拒收。
-    3. **Bottleneck 11 % vs 25 %**：keystone 箭头还是不够。和 fill 同根，更紧密的排布自然有更多互相阻挡。
-    4. **Greedy moves/arrow 1.00 = 1.00**：当前 heuristic 完全不区分两边。如果要用它当 quality lever，得让生成器主动强制 re-pull（拒绝任何 `tryPull` 一遍跑完 = `arrows.length` 步的关）。
-    5. 在 fill / init-esc 两条主线缩短到肉眼接近之前，**不要**把生成关接进正式 picker / `levels_data/`。可以先把样本扔进 dev-playground 让人主观盲测打分。
-- **生成器：`min-sequencing` 之外的更精细 "fun" 指标**。`packages/tools/README.md` §"What about quality / 'fun'?"列了几个候选（greedy heuristic gap / bottleneck arrow / path-length distribution），都没接。
+- **生成器下一步：换构造原语**。2026-05-20 的 placement-side 调参（rayMap-aware extendPath / init-esc-aware extendTails / 构造期 `maxLen=12`）把 arrows / fill / path-len 拉近了；2026-05-21 又加了 `--preset=strict`（chainDepth 8, bottleneck 15 %）把 reverse 自身分布拉到了自己的高分尾，但仍距 corpus 一截。同日尝试的 **chain-skeleton partition v0 是 null result**（见 Done §generate-partition；跟 reverse 的 chainDepth/bottleneck/fill 一样）。剩下的差距如下，全都指向「reverse-construction 原语自身的拓扑上限」而不是参数调优能解决的：
+    1. **Fill 85 % vs 97 %**：reverse / partition 都被拓扑上限锁在 85 %（每根新 arrow 的 ray 必须避开所有先前放置的 body）。要更高需要真的「先 partition 占满网格再排定 escape 顺序」——chain-skeleton v0 没做到，v1 待写。
+    2. **Init-escapable 30 % vs 9 %**：~12 pp 是 zero-ray 锚（算法层面 unblockable，留着是为 fill）。剩下的 ~18 pp 同样要求改原语才能压下去。
+    3. **Bottleneck 11 % vs 25 %** + **chainDepth 7 vs 10**：keystone / 链都不够长。chain-skeleton v0 验证了「沿单链强制下子」不够——filler 阶段照样收敛到 reverse 的分布。
+    4. **Greedy moves/arrow 1.00 = 1.00**：snake-walk escape-first greedy 几乎不需要 re-pull，corpus 和生成 batch 都是 100 % single-shot。这条指标当 regression canary，别拿它做 fun 筛子。
+    5. 候选 v1 方向（按工作量从小到大）：(a) 真的先 partition 网格、为每块分配 facing、做拓扑排序、最后嵌入；(b) 在 reverse 顶上接 SAT/SMT 重排 facing 让 chain 强制变长；(c) 完全放弃严格 snake-walk 可解性，用搜索（带回溯）找高密度高结构布局。
+    6. 在 fill / init-esc 两条主线缩短到肉眼接近之前，**不要**把生成关接进正式 picker / `levels_data/`。可以先把样本扔进 dev-playground 让人主观盲测打分。
+- **关卡顺序按难度桶 shuffle 已上线** — `packages/core/src/order.ts` (`shuffleByDifficulty` + `ensureShuffleSeed`)，每个用户首次启动写一次 32-bit 种子进 `ProgressData.shuffleSeed`，5 个 quantile 桶按 `[WxH]` 面积排序、桶内 Fisher-Yates。Web + wxgame 入口都接好了。开放问题列表里的「关卡顺序是否要打乱」选项 1 已闭合。
 
 ---
 

@@ -41,6 +41,14 @@
 //   --seed       PRNG seed (default 1)
 //   --gen-only   skip corpus sampling (use when no corpus level exists
 //                at the target size)
+//   --from-dir=<dir>
+//                load "generated" levels from .json files in <dir>
+//                instead of running the inline reverse-generator. Useful
+//                for comparing a non-reverse generator (e.g. generate-
+//                partition.mjs) against the corpus without changing
+//                this script. With --from-dir, --w/--h are inferred from
+//                the loaded files (must all match); --count caps how many
+//                are loaded; --seed is ignored.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -482,9 +490,13 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const W = Number(args.w ?? 20);
-const H = Number(args.h ?? 20);
-const count = Number(args.count ?? 50);
+const fromDir =
+  typeof args["from-dir"] === "string" && args["from-dir"] !== "true"
+    ? resolve(args["from-dir"])
+    : null;
+let W;
+let H;
+let count;
 const baseSeed = Number(args.seed ?? 1);
 const genOnly = args["gen-only"] === "true";
 const maxAttempts = Number(args["max-attempts"] ?? 20);
@@ -498,31 +510,64 @@ const genOpts = {
   maxArrows: 300,
 };
 
-// --- Generate synthetic batch ----------------------------------------------
+// --- Load or generate synthetic batch --------------------------------------
 
-console.error(`[1/3] generating ${count} synthetic ${W}×${H} levels…`);
 const genLevels = [];
-let attempts = 0;
-while (genLevels.length < count && attempts < maxAttempts * count) {
-  attempts++;
-  const rand = mulberry32(baseSeed + attempts * 1009);
-  const raw = genOne(W, H, rand, genOpts);
-  if (raw.arrows.length < 2) continue;
-  // Sanity-verify by simulating construction order.
-  const data = loadLevel(raw);
-  const st = createGame(data);
-  let ok = true;
-  for (let i = 0; i < st.arrows.length; i++) {
-    const r = tryPull(st, i);
-    if (!r.escaped) {
-      ok = false;
-      break;
+if (fromDir) {
+  count = Number(args.count ?? 1000);
+  console.error(`[1/3] loading generated levels from ${fromDir}…`);
+  const files = readdirSync(fromDir).filter((f) => f.endsWith(".json"));
+  for (const f of files) {
+    if (genLevels.length >= count) break;
+    try {
+      const raw = JSON.parse(readFileSync(join(fromDir, f), "utf8"));
+      if (!raw.width || !raw.height || !Array.isArray(raw.arrows)) continue;
+      if (W === undefined) {
+        W = raw.width;
+        H = raw.height;
+      } else if (raw.width !== W || raw.height !== H) {
+        console.error(
+          `      WARN ${f} is ${raw.width}×${raw.height}, expected ${W}×${H} — skipping`,
+        );
+        continue;
+      }
+      genLevels.push(raw);
+    } catch {
+      // skip malformed
     }
   }
-  if (!ok) continue;
-  genLevels.push(raw);
+  if (genLevels.length === 0) {
+    console.error(`      no readable .json files in ${fromDir}`);
+    process.exit(1);
+  }
+  console.error(`      loaded ${genLevels.length} level(s) at ${W}×${H}`);
+} else {
+  W = Number(args.w ?? 20);
+  H = Number(args.h ?? 20);
+  count = Number(args.count ?? 50);
+  console.error(`[1/3] generating ${count} synthetic ${W}×${H} levels…`);
+  let attempts = 0;
+  while (genLevels.length < count && attempts < maxAttempts * count) {
+    attempts++;
+    const rand = mulberry32(baseSeed + attempts * 1009);
+    const raw = genOne(W, H, rand, genOpts);
+    if (raw.arrows.length < 2) continue;
+    // Sanity-verify by simulating construction order.
+    const data = loadLevel(raw);
+    const st = createGame(data);
+    let ok = true;
+    for (let i = 0; i < st.arrows.length; i++) {
+      const r = tryPull(st, i);
+      if (!r.escaped) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    genLevels.push(raw);
+  }
+  console.error(`      produced ${genLevels.length}/${count} in ${attempts} attempts`);
 }
-console.error(`      produced ${genLevels.length}/${count} in ${attempts} attempts`);
 
 // --- Sample corpus at the same WxH -----------------------------------------
 

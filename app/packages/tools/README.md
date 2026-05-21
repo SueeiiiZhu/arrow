@@ -14,7 +14,8 @@ All scripts depend on the compiled `@ea/core`, so they run `pnpm -F @ea/core bui
 | `pnpm --filter @ea/tools stat:corpus` | Dump distributional statistics over the full 3548-level corpus (grid sizes, arrow counts, snake lengths, corners, density, facing, tags). |
 | `pnpm --filter @ea/tools generate -- [flags]` | **Procedural level generator** (path-partition algorithm — see below). |
 | `pnpm --filter @ea/tools generate:reverse -- [flags]` | **Reverse-construction generator** (recommended; scales to corpus-median grids — see below). |
-| `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | Distributional comparison: reverse-generated batch vs. same-size corpus sample, on fill / init-escapable / bottleneck / greedy-moves / path-length. See "Quality evaluation" below. |
+| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first generator v0** — chain-skeleton variant on top of reverse. Currently a documented negative result (no win over `generate:reverse` on any structural metric); kept committed as an experiment scaffold. See "Partition-first generator" below. |
+| `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | Distributional comparison: reverse-generated batch vs. same-size corpus sample, on fill / init-escapable / bottleneck / greedy-moves / path-length. Also supports `--from-dir=<dir>` to load externally-generated levels (use this to evaluate `generate:partition` output). See "Quality evaluation" below. |
 
 ## Procedural level generator (`generate.mjs`)
 
@@ -185,6 +186,47 @@ The `--min-sequencing` filter is a coarse quality lever — it caps the fraction
 
 None wired yet — the current generator gates only on construction correctness and the sequencing fraction.
 
+## Partition-first generator (`generate-partition.mjs`) — v0 negative result
+
+A sibling of `generate-reverse.mjs` that pre-commits to a **chain skeleton** of length `K` before doing the standard reverse-construction fill. Each link in the chain is geometrically forced (the new arrow's head cell must sit on the previous arrow's facing ray), so the static blocker DAG is guaranteed to contain a chain of length `chainAchieved`.
+
+### Honest v0 finding
+
+Measured 2026-05-21 on 25×31, `count=30`, `seed=1` (compared via `quality:eval --from-dir`):
+
+| metric | partition | reverse | corpus |
+| --- | --- | --- | --- |
+| forced-chain depth (med) | 7 | 7 | 10 |
+| bottleneck % (med) | 11 % | 12 % | 26 % |
+| init-escapable % (med) | 31 % | 30 % | 9 % |
+| fill % (med) | 85 % | 85 % | 97 % |
+
+Partition v0 essentially **ties** the reverse generator on every structural metric and stays just as far from the corpus. The chain skeleton is a local construction step — once we exit phase 1, phase 2's filler reuses the same `placeOne` logic from `generate-reverse.mjs`, and the distribution converges to the same place. Cranking `--target-fill` past 0.85 doesn't help either: the reverse-construction primitive caps fill at ~85 % on 25×31 because every new arrow's ray must stay clear of all preceding-placed bodies.
+
+**Kept committed** because the script makes the experiment reproducible (and the `quality:eval --from-dir` flag is generally useful for any future generator). The next experiment is a true partition-then-topo-sort generator (planned v1, not yet written).
+
+### Usage
+
+```bash
+# Smoke test (10 levels at 15×15, default chain-target):
+pnpm --filter @ea/tools generate:partition -- --w=15 --h=15 --count=10 --seed=1
+
+# Write to /tmp/eval-partition and compare against corpus + reverse:
+mkdir -p /tmp/eval-partition
+pnpm --filter @ea/tools generate:partition -- --w=25 --h=31 --count=30 --seed=1 \
+  --chain-target=18 --out=/tmp/eval-partition
+pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition
+```
+
+### Flags
+
+Inherits everything from `generate:reverse` (same anchor algorithm, same path-extension, same reject gates). Partition-specific:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--chain-target` | `clamp(6..20, min(W,H))` | Target chain length to build before the random fill. Higher = more attempts, more rejections. |
+| `--chain-min` | `chain-target − 2` | Reject the candidate if the achieved chain length is below this. Setting it to 0 disables the gate (recommended for v0 since most attempts fall short of `chain-target`). |
+
 ## Quality evaluation (`quality-eval.mjs`)
 
 Generator output is "solvable by construction", but solvability is the floor, not the ceiling. To know whether the generated batch *feels* like the APK corpus, we compare distributions on a handful of shape / structural / heuristic-difficulty metrics — a side-by-side at the same grid size.
@@ -210,6 +252,7 @@ pnpm --filter @ea/tools quality:eval -- --w=20 --h=20 --count=20 --gen-only
 | `--seed` | 1 | PRNG seed (`mulberry32`). |
 | `--max-attempts` | 20 | Per-level rejection cap, mirrors `generate-reverse.mjs`. |
 | `--gen-only` | off | Skip the corpus scan — just dump generator-side stats. |
+| `--from-dir` | (none) | Load "generated" levels from `.json` files in `<dir>` instead of running the inline reverse-generator. Use this to evaluate any external generator (e.g. `generate-partition.mjs` output). With `--from-dir`, `--w` / `--h` are inferred from the loaded files, `--seed` is ignored, and `--count` caps how many files are loaded. |
 
 ### Metrics
 
