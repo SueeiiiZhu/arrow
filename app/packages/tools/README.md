@@ -1,5 +1,7 @@
 # @ea/tools
 
+> 中文版本: [README.zh-CN.md](./README.zh-CN.md)
+
 Private workspace package — solver, corpus analysis, and the procedural level generator. None of these scripts ship in the H5 or wxgame bundle; they're for offline use.
 
 All scripts depend on the compiled `@ea/core`, so they run `pnpm -F @ea/core build` (`prebuild:core`) as a prestep. If you've just edited `packages/core/`, this picks up the new code automatically.
