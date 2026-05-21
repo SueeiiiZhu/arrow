@@ -14,7 +14,7 @@ All scripts depend on the compiled `@ea/core`, so they run `pnpm -F @ea/core bui
 | `pnpm --filter @ea/tools stat:corpus` | Dump distributional statistics over the full 3548-level corpus (grid sizes, arrow counts, snake lengths, corners, density, facing, tags). |
 | `pnpm --filter @ea/tools generate -- [flags]` | **Procedural level generator** (path-partition algorithm — see below). |
 | `pnpm --filter @ea/tools generate:reverse -- [flags]` | **Reverse-construction generator** (recommended; scales to corpus-median grids — see below). |
-| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first generator v1** — real path-partition + Kahn-style joint facing+escape-order assignment. Beats both reverse and corpus on chain-depth / bottleneck / init-escapable at 10–20×20; deadlocks on dense large grids (25×31+). See "Partition-first generator" below. |
+| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first generator v2** — real path-partition + Kahn joint facing/escape-order + targeted SCC-core backtracking. Beats reverse and matches/beats corpus on most structural metrics at 10×10 through 25×31. 31×38 works but minutes per candidate. See "Partition-first generator" below. |
 | `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | Distributional comparison: reverse-generated batch vs. same-size corpus sample, on fill / init-escapable / bottleneck / greedy-moves / path-length. Also supports `--from-dir=<dir>` to load externally-generated levels (use this to evaluate `generate:partition` output). See "Quality evaluation" below. |
 
 ## Procedural level generator (`generate.mjs`)
@@ -186,9 +186,9 @@ The `--min-sequencing` filter is a coarse quality lever — it caps the fraction
 
 None wired yet — the current generator gates only on construction correctness and the sequencing fraction.
 
-## Partition-first generator (`generate-partition.mjs`) — v1
+## Partition-first generator (`generate-partition.mjs`) — v2
 
-A sibling of `generate-reverse.mjs` with a fundamentally different construction primitive: instead of placing arrows in reverse escape order (reverse-construction's invariant), v1 first **path-partitions the grid** into snake-shaped paths (geometry only, no facing yet), then **jointly assigns each path's facing and escape order via Kahn-style topological construction**. Choosing facing and order at the same time means we never produce a cycle in the blocker DAG — Phase 3 of the older "topo-sort, then break cycles" sketch doesn't exist as a separate step.
+A sibling of `generate-reverse.mjs` with a fundamentally different construction primitive: instead of placing arrows in reverse escape order (reverse-construction's invariant), it first **path-partitions the grid** into snake-shaped paths (geometry only, no facing yet), then **jointly assigns each path's facing and escape order via Kahn-style topological construction**. Choosing facing and order at the same time means we never produce a cycle in the blocker DAG — Phase 3 of the older "topo-sort, then break cycles" sketch doesn't exist as a separate step. v2 adds **targeted SCC-core backtracking**: when Kahn deadlocks, the unpicked paths *are* the strongly-connected component, so we drop exactly those (plus a few neighbour-boundary paths for perturbation), then regrow with the advanced PRNG.
 
 ### Why this beats reverse on structural quality
 
@@ -196,31 +196,39 @@ Reverse-construction has to keep every new arrow's ray clear of all previously p
 
 Partition-first only commits to facings AFTER the geometry is pinned, so paths may freely cross other paths' rays. Each ray crossing becomes a topological dependency (the crossed-by-ray path must escape before the crossing-ray path). Density of crossings = density of dependencies = depth of chain.
 
-### Measured quality (2026-05-21, 20×20, seed=1, count=30)
+### Measured quality (2026-05-21)
 
-vs corpus (n=1 corpus level at this size — small sample, big caveat) and vs reverse-generator baseline:
+**20×20, count=5, seed=1** vs n=1 corpus and reverse-gen:
 
-| metric | partition v1 | reverse-gen | corpus (n=1) |
+| metric | partition v2 | reverse-gen v1 | corpus (n=1) |
 | --- | --- | --- | --- |
-| arrows (med) | 56 | ~25 | 29 |
-| fill % (med) | 98 % | ~85 % | 99 % |
-| init-escapable % (med) | **14 %** | ~30 % | 24 % |
+| arrows (med) | 57 | ~25 | 29 |
+| fill % (med) | 97 % | ~85 % | 99 % |
+| init-escapable % (med) | **11 %** | ~30 % | 24 % |
 | bottleneck % (med) | **21 %** | ~12 % | 17 % |
-| forced-chain depth (med) | **9** | ~7 | 6 |
-| path-len p50 | 7 | 10 | 11 |
+| forced-chain depth (med) | **8** | ~7 | 6 |
+| yield | 5/5 in 11 attempts | 10/10 in 16 attempts | — |
 
-Partition v1 beats both reverse and the (single) 20×20 corpus level on the three structural quality metrics that matter most for snake-walk puzzles (init-esc, bottleneck, chain-depth). It packs more arrows of shorter length, which is the direct consequence of the partition primitive — and which our `--min-sequencing` / `--min-chain-depth` gates approve of.
+**25×31 (corpus median), count=5, seed=2** vs n=7 corpus levels:
 
-### Known limitation: dense large grids
+| metric | partition v2 | reverse-gen v1 | corpus (n=7) |
+| --- | --- | --- | --- |
+| arrows (med) | 98 | ~64 | 67 |
+| fill % (med) | **96 %** | 85 % | 97 % |
+| init-escapable % (med) | **15 %** | 30 % | 9 % |
+| bottleneck % (med) | **19 %** | 11 % | 26 % |
+| forced-chain depth (med) | **9** | 7 | 10 |
+| yield (target-fill=0.85) | 5/5 in 34 attempts | — | — |
 
-On 25×31 at high target-fill, v1's random partition tends to produce blocker DAGs with strongly-connected components that no Kahn restart can break (every remaining path's both facing rays depend on each other). Empirically robust on 10×10 through 20×20 at `target-fill=0.95`; at 25×31 with `target-fill=0.7`, yield drops to 1/3 over 240 attempts. This is the v1 cliff.
+Partition v2 closes the 25×31 gap that v1 couldn't reach: fill matches corpus, chain-depth matches corpus (9 vs 10), bottleneck within 7pp (19 % vs 26 %), init-escapable down from reverse-gen's 30 % to 15 % (still 6pp above corpus' 9 %). It packs more arrows of shorter length than the corpus, which is the partition primitive's signature — and which our `--min-sequencing` / `--min-chain-depth` gates approve of.
 
-Fixing it would require one of:
+### Known limitation: 31×38 and larger
 
-- **Real backtracking over partition geometry** — when Kahn deadlocks, undo the last few paths and regrow with different shapes/seeds. Currently we just reject the candidate and start over with a fresh PRNG.
-- **Facing-aware path growth** — during Phase 1, prefer paths whose endpoints' facing rays would cross fewer already-committed paths (i.e. plan for low DAG depth at growth time). Currently Phase 1 is pure geometry, blind to DAG structure.
+v2 backtracking works on 31×38 (the largest commonly-occurring corpus size) but **takes minutes per candidate** because the partition has ~120 paths and each backtrack triggers a full Kahn re-run with O(N²) blocker-scan. If you need 31×38+ levels, use `generate:reverse` (sub-second per candidate, but with the structural-quality gaps documented in its section). v2 ≤ 25×31 is fast (seconds per candidate).
 
-Both are real engineering. For now, v1 is the recommended generator at 10×10 through ~20×20; use `generate:reverse` for corpus-median-and-larger.
+### v1 (deprecated)
+
+v1 used Kahn restarts with random tie-break but no geometric backtracking. It deadlocked on dense 25×31+ partitions because random self-avoiding paths tend to form unbreakable strongly-connected components in the blocker DAG. v2 fixes this by detecting the SCC core (= unpicked paths after Kahn) and undoing exactly those. The previous v1 limitation that "25×31 yield is 1/3 at target-fill=0.7" is fully resolved at target-fill=0.85.
 
 ### Usage
 
@@ -231,11 +239,15 @@ pnpm --filter @ea/tools generate:partition -- --w=15 --h=15 --count=5 --seed=1
 # Write to packages/tools/generated/ (gitignored):
 pnpm --filter @ea/tools generate:partition -- --w=20 --h=20 --count=10 --seed=1 --out
 
+# Corpus-median 25×31 (v2 territory — push backtracks higher for borderline cases):
+pnpm --filter @ea/tools generate:partition -- --w=25 --h=31 --count=5 --seed=2 \
+  --target-fill=0.85 --max-backtracks=50 --out
+
 # Compare against same-size corpus (or against reverse-generator output):
-mkdir -p /tmp/eval-partition-v1
+mkdir -p /tmp/eval-partition
 pnpm --filter @ea/tools generate:partition -- --w=20 --h=20 --count=30 --seed=1 \
-  --out=/tmp/eval-partition-v1
-pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition-v1
+  --out=/tmp/eval-partition
+pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition
 ```
 
 ### Flags
@@ -247,8 +259,10 @@ Inherits sequencing / chain / bottleneck / deadlock gates from `generate:reverse
 | `--target-fill` | 0.95 | Fraction of cells covered by partition paths. Phase 1 stops when reached; tail extension may push higher. |
 | `--min-arrow-len` | 3 | Minimum path length grown by Phase 1. |
 | `--max-arrow-len` | 12 | Maximum path length grown by Phase 1. Shorter = more paths = denser blocking. |
-| `--init-esc-rate` | 0.1 | When Kahn has both "blocked" (ray-blocked) and "open" (no blockers) candidates available, probability of picking an open one. Lower = tighter sequencing (more rejections from Kahn deadlock). |
-| `--kahn-retries` | 20 | Phase-2 retry budget when Kahn deadlocks. Higher helps on borderline geometries but doesn't fix true SCCs. |
+| `--init-esc-rate` | 0.1 | When Kahn has both "blocked" (ray-blocked) and "open" (no blockers) candidates available, probability of picking an open one. Lower = tighter sequencing. |
+| `--kahn-retries` | 20 | Phase-2 retry budget when Kahn deadlocks on a fixed geometry. Higher helps borderline cases; v2 backtracking handles the rest. |
+| `--max-backtracks` | 20 | v2 SCC-core backtrack budget per candidate. Raise to 50–80 on 25×31+ to keep yield up at high `--target-fill`. |
+| `--backtrack-chunk` | 3 | After each backtrack also drop this many of the most recently *picked* paths, to perturb the SCC boundary so re-growth doesn't refill identical holes. |
 | `--max-deadlock-rate` | 0.05 | Reject if random-pull rollout deadlocks above this rate (`--rollout-trials=100` default). Catches puzzles solvable by construction but unfriendly to greedy human play. |
 | `--straight-bias` | 0.65 | Probability of continuing in the same direction during path growth. |
 

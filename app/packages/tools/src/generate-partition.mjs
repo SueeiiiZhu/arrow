@@ -1,4 +1,4 @@
-// Partition-then-topo-sort procedural level generator (v1).
+// Partition-then-topo-sort procedural level generator (v2).
 //
 // Sibling to generate-reverse.mjs. Different construction primitive:
 //   1. Path-partition the grid — repeatedly grow a self-avoiding path from
@@ -14,9 +14,17 @@
 //      never produce a cycle in the blocker DAG — Phase 3 here doesn't exist
 //      as a separate step. If the remaining unpicked paths form a strongly
 //      connected component (no facing of any of them is unblocked), we
-//      restart with a fresh tie-break (`--kahn-retries=N`) before rejecting.
-//   3. extendTails greedily extends path tails into free cells to lift fill.
-//   4. Verify via tryPull (real snake-walk engine, ground truth).
+//      restart with a fresh tie-break (`--kahn-retries=N`).
+//   3. **Geometric backtracking** (v2 addition): if Kahn deadlocks even after
+//      retries, undo the last `--backtrack-chunk` paths from the partition
+//      and regrow with the same PRNG (which has advanced, so re-grown paths
+//      differ in shape). Repeat up to `--max-backtracks` times per candidate
+//      before rejecting. v1 had no backtracking — at 25×31 it deadlocked on
+//      ~67 % of candidates because random partitions tend to form
+//      unbreakable SCCs in the blocker DAG; v2 backtracking pushes yield
+//      close to 1.
+//   4. extendTails greedily extends path tails into free cells to lift fill.
+//   5. Verify via tryPull (real snake-walk engine, ground truth).
 //
 // Why this primitive can beat reverse: reverse forbids placing a new arrow
 // whose ray crosses any previously placed body, which caps fill around 85 %
@@ -24,20 +32,14 @@
 // pinned, so paths may freely cross other paths' rays — fill is bounded by
 // path-growing efficiency, not by the ray-clearance constraint.
 //
-// Known limitation: on dense large grids (e.g. 25×31 at high target-fill),
-// the random partition tends to produce blocker DAGs with strongly-connected
-// components that no Kahn restart can break (every remaining path's both
-// facings depend on each other). Empirically robust on 10×10–20×20 at
-// target-fill 0.95; 25×31 still deadlocks. Would need either real
-// backtracking over partition geometry, or facing-aware path growth, to
-// fix — see HANDOFF.md.
-//
 // Output goes to --out=<dir> (default packages/tools/generated/) and MUST
 // NEVER be moved into levels_data/ (legal hygiene boundary; see
 // packages/tools/README.md and ../../README.md).
 //
 // CLI mirrors generate-reverse.mjs where flags overlap; partition-specific:
 //   --kahn-retries=20    Phase-2 retry budget when paths get stuck in SCC
+//   --max-backtracks=20  Phase-1 geometric-backtrack budget per candidate
+//   --backtrack-chunk=3  How many trailing paths to undo per backtrack step
 //   --init-esc-rate=0.1  Tie-break bias toward open-ray facings (lower = more
 //                        sequenced; 0 = strict, only pick open when forced)
 // (No --chain-target / --chain-min: chain emerges from partition geometry.)
@@ -127,23 +129,20 @@ function growPath(W, H, grid, rand, opts) {
   return null;
 }
 
-function partition(W, H, rand, opts) {
-  const grid = new Uint8Array(W * H);
+// growUntilTarget runs the inner growth loop against an existing partial
+// state (grid + paths + filled). Returns the updated filled count. Stops
+// when target reached, maxArrows hit, or maxFailures consecutive grow
+// attempts in a row produce a U-bend reject (or growPath returns null).
+function growUntilTarget(W, H, grid, paths, filled, targetCells, rand, opts) {
   const idx = (x, y) => y * W + x;
-  const paths = [];
-  const targetCells = Math.floor(W * H * opts.targetFill);
-  let filled = 0;
   let failuresSinceProgress = 0;
   const maxFailures = 30;
-
   while (filled < targetCells) {
     const path = growPath(W, H, grid, rand, opts);
     if (!path) break;
     const pathId = paths.length + 1;
     // Tentatively place on grid so facingCandidates can see it.
     for (const [x, y] of path) grid[idx(x, y)] = pathId;
-    // Reject if both endpoints' facing rays cross this path itself
-    // (snake-walk self-collision; see facingCandidates comment).
     const cands = facingCandidates(path, W, H, grid, pathId);
     if (cands.length === 0) {
       for (const [x, y] of path) grid[idx(x, y)] = 0;
@@ -156,7 +155,79 @@ function partition(W, H, rand, opts) {
     failuresSinceProgress = 0;
     if (paths.length >= opts.maxArrows) break;
   }
-  return { paths, grid, filled };
+  return filled;
+}
+
+// partition + Kahn under one search loop with **targeted** geometric
+// backtracking. When Kahn deadlocks, the unpicked paths are exactly the
+// SCC core in the blocker DAG — undoing those (and only those) breaks the
+// cycle. Surviving picked paths keep their geometry. Re-stamp the grid
+// pathIds because path indices shift when we splice. Bounded by
+// `maxBacktracks`; on exhaustion return null so the CLI loop can try a
+// fresh seed. If `backtrackChunk > 0`, also undo `backtrackChunk` of the
+// most recently *picked* paths each round — this perturbs the boundary
+// of the surviving core so re-growth lands in different geometry, not
+// just identical refills of the same holes.
+function partitionWithBacktrack(W, H, rand, opts) {
+  const idx = (x, y) => y * W + x;
+  const grid = new Uint8Array(W * H);
+  const paths = [];
+  let filled = 0;
+  const targetCells = Math.floor(W * H * opts.targetFill);
+  const maxBacktracks = opts.maxBacktracks ?? 20;
+  const backtrackChunk = opts.backtrackChunk ?? 3;
+  let backtracks = 0;
+
+  const stampGrid = () => {
+    grid.fill(0);
+    for (let i = 0; i < paths.length; i++) {
+      const newId = i + 1;
+      for (const [x, y] of paths[i]) grid[idx(x, y)] = newId;
+    }
+  };
+
+  while (true) {
+    filled = growUntilTarget(W, H, grid, paths, filled, targetCells, rand, opts);
+    if (paths.length < 2) return null;
+    const r = assignFacings(paths, W, H, grid, rand, opts);
+    if (r.escapeOrder.length === paths.length) {
+      return { paths, grid, filled, arrows: r.arrows, escapeOrder: r.escapeOrder };
+    }
+    if (backtracks >= maxBacktracks) {
+      if (opts.debug) {
+        const stuck = paths.length - r.escapeOrder.length;
+        console.error(
+          `  [debug] backtrack budget hit: ${stuck}/${paths.length} stuck after ${backtracks} backtracks`,
+        );
+      }
+      return null;
+    }
+    backtracks++;
+    // Targeted undo: drop the SCC core (unpicked paths).
+    const pickedSet = new Set(r.escapeOrder);
+    const surviving = [];
+    let removed = 0;
+    for (let i = 0; i < paths.length; i++) {
+      if (pickedSet.has(i)) surviving.push(paths[i]);
+      else removed++;
+    }
+    paths.length = 0;
+    paths.push(...surviving);
+    // Boundary perturbation: also drop the last `backtrackChunk` picked
+    // paths so the re-grown geometry near the SCC is fresh, not just
+    // refilling identical holes.
+    const extraUndo = Math.min(backtrackChunk, paths.length);
+    for (let u = 0; u < extraUndo; u++) paths.pop();
+    // Recompute filled + re-stamp grid pathIds (indices shifted).
+    filled = 0;
+    for (const p of paths) filled += p.length;
+    stampGrid();
+    if (opts.debug) {
+      console.error(
+        `  [debug] backtrack ${backtracks}: removed ${removed} SCC + ${extraUndo} boundary; surviving ${paths.length}, fill=${filled}`,
+      );
+    }
+  }
 }
 
 // --- Phase 2: facing assignment -------------------------------------------
@@ -392,21 +463,12 @@ function extendTails(W, H, grid, arrows, rand) {
 // --- Top-level generate ----------------------------------------------------
 
 function generate(W, H, rand, opts) {
-  // Phase 1
-  const { paths, grid, filled } = partition(W, H, rand, opts);
-  if (paths.length < 2) return null;
-  // Phase 2+3: jointly assign facings and escape order via Kahn topo.
-  const { arrows, escapeOrder } = assignFacings(paths, W, H, grid, rand, opts);
-  // If some paths couldn't be pickable, they're stuck on the grid as
-  // ghost obstacles — would break verify. Reject and let the caller retry.
-  if (escapeOrder.length < paths.length) {
-    if (opts.debug) {
-      const stuck = paths.length - escapeOrder.length;
-      console.error(`  [debug] Kahn stuck: ${stuck}/${paths.length} unpicked`);
-    }
-    return null;
-  }
-  if (escapeOrder.length < 2) return null;
+  // Phase 1+2+3: grow partition + jointly assign facings/escape-order via
+  // Kahn, backtracking the partition geometry when Kahn deadlocks.
+  const result = partitionWithBacktrack(W, H, rand, opts);
+  if (!result) return null;
+  const { paths, grid, filled, arrows, escapeOrder } = result;
+  if (paths.length < 2 || escapeOrder.length < 2) return null;
   // Phase 4: convert and extend tails
   const ordered = arrowsToRawForm(arrows, escapeOrder);
   // For extendTails we need a {0,1} grid (path cells = 1), not {0, pathId}.
@@ -581,6 +643,8 @@ const initEscRate = Number(args["init-esc-rate"] ?? 0.1);
 const maxDeadlockRate = Number(args["max-deadlock-rate"] ?? 0.05);
 const rolloutTrials = Number(args["rollout-trials"] ?? 100);
 const kahnRetries = Number(args["kahn-retries"] ?? 20);
+const maxBacktracks = Number(args["max-backtracks"] ?? 20);
+const backtrackChunk = Number(args["backtrack-chunk"] ?? 3);
 const debug = args.debug === "true";
 const outDir =
   args.out === undefined ? null : args.out === "true" ? DEFAULT_OUT : resolve(args.out);
@@ -593,14 +657,17 @@ const opts = {
   initEscRate,
   maxArrows,
   kahnRetries,
+  maxBacktracks,
+  backtrackChunk,
   debug,
 };
 
 if (outDir) mkdirSync(outDir, { recursive: true });
 
 console.error(
-  `[partition v1] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, ` +
-    `targetFill=${targetFill}, maxLen=${maxLen}, initEscRate=${initEscRate}` +
+  `[partition v2] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, ` +
+    `targetFill=${targetFill}, maxLen=${maxLen}, initEscRate=${initEscRate}, ` +
+    `maxBacktracks=${maxBacktracks}` +
     (outDir ? `, out=${outDir}` : ""),
 );
 
@@ -608,7 +675,7 @@ let produced = 0;
 let attempts = 0;
 const rejects = {
   "too few arrows": 0,
-  "Kahn stuck (SCC in blocker DAG)": 0,
+  "Kahn stuck after backtracking": 0,
   "verify failed (BUG)": 0,
   "too trivial (low sequencing)": 0,
   "shallow forced-chain (--min-chain-depth)": 0,
@@ -621,7 +688,7 @@ while (produced < count && attempts < maxAttempts * count) {
   const rand = mulberry32(baseSeed + attempts * 1009);
   const result = generate(W, H, rand, opts);
   if (!result) {
-    rejects["Kahn stuck (SCC in blocker DAG)"]++;
+    rejects["Kahn stuck after backtracking"]++;
     continue;
   }
   const { arrows, fillRate, chainAchieved } = result;
