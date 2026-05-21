@@ -38,11 +38,30 @@ test("loadProgress drops non-string entries from completed[]", () => {
 
 test("saveProgress + loadProgress round-trip preserves data", () => {
   const s = memStorage();
-  const original = { lastKey: "level-7.json", completed: new Set(["a", "b", "c"]) };
+  const original = {
+    lastKey: "level-7.json",
+    completed: new Set(["a", "b", "c"]),
+    shuffleSeed: 0xdeadbeef,
+  };
   saveProgress(s, original);
   const restored = loadProgress(s);
   assert.equal(restored.lastKey, "level-7.json");
   assert.deepEqual([...restored.completed].sort(), ["a", "b", "c"]);
+  assert.equal(restored.shuffleSeed, 0xdeadbeef);
+});
+
+test("loadProgress drops non-positive / NaN shuffleSeed to null", () => {
+  for (const bad of [0, -1, Number.NaN, "5", null]) {
+    const s = memStorage();
+    s.write(JSON.stringify({ lastKey: null, completed: [], shuffleSeed: bad }));
+    assert.equal(loadProgress(s).shuffleSeed, null, `bad seed ${String(bad)}`);
+  }
+});
+
+test("loadProgress defaults shuffleSeed to null when absent", () => {
+  const s = memStorage();
+  s.write(JSON.stringify({ lastKey: "x", completed: [] }));
+  assert.equal(loadProgress(s).shuffleSeed, null);
 });
 
 test("loadProgress treats non-string lastKey as null", () => {

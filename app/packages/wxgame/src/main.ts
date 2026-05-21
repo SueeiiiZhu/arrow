@@ -2,6 +2,7 @@ import {
   type CompactLevel,
   createGame,
   decodeCompact,
+  ensureShuffleSeed,
   findArrowAt,
   type GameState,
   loadLevel,
@@ -10,6 +11,7 @@ import {
   type ProgressStorage,
   resetGame,
   saveProgress,
+  shuffleByDifficulty,
   tryPull,
 } from "@ea/core";
 import {
@@ -63,6 +65,12 @@ const progress: Progress = loadProgress(storage);
 function persist(): void {
   saveProgress(storage, progress);
 }
+
+// Player-facing order: difficulty quantiles, intra-bucket shuffle keyed by
+// a per-user seed minted on first launch. See @ea/core/order.
+const shuffleSeed = ensureShuffleSeed(progress);
+persist();
+const ORDERED_KEYS = shuffleByDifficulty(ALL_KEYS, shuffleSeed);
 
 // --- canvas ---------------------------------------------------------------
 
@@ -319,8 +327,8 @@ function tryAdRefill(): void {
 // --- level selection ------------------------------------------------------
 
 function selectLevelByIndex(i: number): void {
-  if (i < 0 || i >= ALL_KEYS.length) return;
-  const key = ALL_KEYS[i]!;
+  if (i < 0 || i >= ORDERED_KEYS.length) return;
+  const key = ORDERED_KEYS[i]!;
   levelIndex = i;
   loadingKey = key;
   game = null;
@@ -460,9 +468,9 @@ function drawHud(): void {
   ctx.font = "16px sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  const key = ALL_KEYS[levelIndex] ?? "";
+  const key = ORDERED_KEYS[levelIndex] ?? "";
   const name = key.replace(/^\d+__/, "").replace(/\.json$/, "");
-  ctx.fillText(`${levelIndex + 1}/${ALL_KEYS.length}  ${name}`, 12, 28);
+  ctx.fillText(`${levelIndex + 1}/${ORDERED_KEYS.length}  ${name}`, 12, 28);
 
   drawHearts(cssW / 2, 28);
 
@@ -646,7 +654,7 @@ wx.onTouchStart((e: WxTouchEvent) => {
     synth.thud();
   }
   if (r.won) {
-    const key = ALL_KEYS[levelIndex]!;
+    const key = ORDERED_KEYS[levelIndex]!;
     progress.completed.add(key);
     persist();
     winStart = performance.now();
@@ -659,7 +667,7 @@ wx.onTouchStart((e: WxTouchEvent) => {
 // --- bootstrap ------------------------------------------------------------
 
 // Restore last-played level if it's known; else level 0.
-const restoreIdx = progress.lastKey ? ALL_KEYS.indexOf(progress.lastKey) : -1;
+const restoreIdx = progress.lastKey ? ORDERED_KEYS.indexOf(progress.lastKey) : -1;
 selectLevelByIndex(restoreIdx >= 0 ? restoreIdx : 0);
 
 // Surface PACK_COUNT for inspection in devtools.

@@ -2,6 +2,7 @@ import {
   type CompactLevel,
   createGame,
   decodeCompact,
+  ensureShuffleSeed,
   findArrowAt,
   type GameState,
   loadLevel,
@@ -10,6 +11,7 @@ import {
   type ProgressStorage,
   resetGame,
   saveProgress,
+  shuffleByDifficulty,
   tryPull,
   validateLevel,
 } from "@ea/core";
@@ -167,8 +169,8 @@ function parseEntry(key: string): Entry {
   return { key, name, size, count, tags };
 }
 
-const entries: Entry[] = ALL_KEYS.map(parseEntry);
-const allTags = [...new Set(entries.flatMap((e) => e.tags))].sort();
+// Order is computed lazily: we need progress.shuffleSeed first, which lives
+// further down. See "ordering" section below where ORDERED_KEYS is produced.
 
 // --- compact-level lookup ---------------------------------------------------
 
@@ -241,6 +243,20 @@ const progress: Progress = loadProgress(storage);
 function persist(): void {
   saveProgress(storage, progress);
 }
+
+// --- ordering ---------------------------------------------------------------
+//
+// shuffleByDifficulty groups ALL_KEYS into difficulty quantiles (bucket
+// sequence ascending) and deterministically shuffles within each bucket
+// using a per-user seed. Seed is minted on first launch and persisted so
+// returning players see a stable order.
+
+const shuffleSeed = ensureShuffleSeed(progress);
+persist();
+const ORDERED_KEYS = shuffleByDifficulty(ALL_KEYS, shuffleSeed);
+
+const entries: Entry[] = ORDERED_KEYS.map(parseEntry);
+const allTags = [...new Set(entries.flatMap((e) => e.tags))].sort();
 
 // --- DOM refs ---------------------------------------------------------------
 
