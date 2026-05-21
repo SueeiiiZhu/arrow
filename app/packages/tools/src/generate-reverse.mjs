@@ -559,7 +559,35 @@ function parseArgs(argv) {
   return out;
 }
 
-const args = parseArgs(process.argv.slice(2));
+// Presets: collections of reject gates calibrated against the corpus
+// distribution. Apply BEFORE individual flags so explicit overrides win.
+// - "loose"  → today's default; produces fast, accepts most candidates.
+// - "strict" → tuned 2026-05-21 to push generated batches above the
+//              reverse-generator's median on chainDepth (≥8) and
+//              bottleneck (≥15%). Still ~1 standard deviation below
+//              corpus median (10 / 25%) — closing that fully needs a
+//              different construction primitive (see generate-partition).
+//              Takes ~5× the attempts of loose but stays under a minute
+//              for count=10 on corpus-median grids.
+const PRESETS = {
+  loose: {},
+  strict: {
+    "min-chain-depth": "8",
+    "min-bottleneck": "0.15",
+    "max-attempts": "120",
+  },
+};
+
+const rawArgs = parseArgs(process.argv.slice(2));
+const presetName = rawArgs.preset;
+if (presetName != null && !(presetName in PRESETS)) {
+  console.error(
+    `[reverse] unknown preset '${presetName}'. Available: ${Object.keys(PRESETS).join(", ")}`,
+  );
+  process.exit(2);
+}
+const args = { ...(presetName ? PRESETS[presetName] : {}), ...rawArgs };
+
 const W = Number(args.w ?? 10);
 const H = Number(args.h ?? 10);
 const baseSeed = Number(args.seed ?? 1);
@@ -585,6 +613,7 @@ if (outDir) mkdirSync(outDir, { recursive: true });
 
 console.error(
   `[reverse] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, targetFill=${targetFill}` +
+    (presetName ? `, preset=${presetName}` : "") +
     (outDir ? `, out=${outDir}` : ""),
 );
 

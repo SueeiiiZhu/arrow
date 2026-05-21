@@ -135,6 +135,11 @@ pnpm --filter @ea/tools generate:reverse -- --w=31 --h=38 --count=5 --seed=1 --o
 
 # Stricter sequencing — at most 20 % of arrows allowed to escape independently:
 pnpm --filter @ea/tools generate:reverse -- --w=20 --h=20 --count=5 --min-sequencing=0.2
+
+# Tuned "strict" preset (chain-depth ≥ 8 + bottleneck ≥ 15 % + 120 attempts/level).
+# Pushes a generated batch ~1 σ closer to the corpus distribution. ~5× slower
+# than the default but stays under a minute for count=10 at corpus-median grid.
+pnpm --filter @ea/tools generate:reverse -- --w=25 --h=31 --count=10 --seed=1 --preset=strict --out
 ```
 
 ### Flags
@@ -150,8 +155,11 @@ pnpm --filter @ea/tools generate:reverse -- --w=20 --h=20 --count=5 --min-sequen
 | `--max-arrows` | 300 | Hard cap on arrows per level. |
 | `--max-attempts` | 20 | Stop after this × `count` rejected candidates. |
 | `--min-sequencing` | 0.5 | Reject if fraction of *initially* escapable arrows exceeds this. Lower = tighter puzzle (harder to find). |
+| `--min-chain-depth` | 0 | Reject if longest static blocker chain shorter than N. Corpus median ≈ 10; the reverse-generator's own median ≈ 8. |
+| `--min-bottleneck` | 0 | Reject if fraction of arrows blocking ≥ 2 other arrows is below this. Corpus median ≈ 25 %; the reverse-generator's own median ≈ 10 %. |
 | `--ray-bias` | 0.95 | When extending a path, probability of picking a cell already on a preceding arrow's facing ray over any other valid neighbour. High keeps init-escapable count low. |
 | `--straight-bias` | 0.65 | Probability of continuing in the same direction during path extension (applied after ray-bias). |
+| `--preset` | (none) | Apply a named bundle of gates BEFORE individual flags. `loose` = today's defaults; `strict` = `--min-chain-depth=8 --min-bottleneck=0.15 --max-attempts=120`. Individual flags after `--preset` override its values. |
 | `--out` | (none) | If present (with or without `=<dir>`): write `gen_rev_w{W}h{H}_s{seed}_n{NNN}.json`. Without `--out`, JSONL to stdout. Default dir: `packages/tools/generated/` (gitignored). |
 
 ### Yield
