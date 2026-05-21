@@ -11,7 +11,7 @@
 - `core/`: snake-walk model (body slides along its bent path, head extends past `path[0]` along `facing`). `tryPull` is greedy. New exports `trajectoryAt(data, t)` / `bodyCellsAt(data, k)` accept fractional `k` so animation tweens can interpolate smoothly. Full rationale is in the header comment of `packages/core/src/game.ts`.
 - `renderer/`: `drawGame` consumes `bodyCellsAt`. Body is a thick rounded polyline, head is a rounded-corner triangle (approximates the original `ArrowHead.png` shape), tail is a filled circle cap (approximates `ArrowEnd.png`). **No original sprites are bundled — everything is Canvas paths.** `DrawOptions` gained `progressOverride`, `shakeOffsets`, and `drawEscapedIds` so the entry layer can drive animation.
 - `web/src/main.ts` and `wxgame/src/main.ts`: rAF tweens (easeOutCubic, 120-450ms scaled with distance), 220ms damped shake along `facing` for blocked taps. Input is gated while a pull is animating.
-- `wxgame/`: esbuild bundles entry + first 50 levels into `dist/wxgame/game.js` (~700KB CJS) plus a `game.json` manifest.
+- `wxgame/`: esbuild bundles entry + main 30 levels into `dist/wxgame/game.js` (~560 KB CJS) plus a `game.json` manifest; the remaining 3518 levels ship as 12 subpackages loaded on demand (see the entry below).
 - `README.md`: local startup + WeChat DevTools import steps.
 - Sanity solver: lives in `packages/tools/` (`@ea/tools`, private). `pnpm --filter @ea/tools solve:big` solves `OG_LevelBig7` (62 arrows) in ~75ms with the "escape-first + step-count" ranked greedy. `pnpm --filter @ea/tools solve:all -- --limit=all` is the full-corpus sweep; greedy is enough on the sample. DFS fallback (hash-memoized) is wired in case of regressions.
 - Head-extension model verified empirically. `packages/tools/src/analyze-head-void.mjs` simulates two rules against the corpus — LAX (current: head freely crosses any in-grid cell not occupied by another body) vs STRICT (head additionally blocked by cells outside the level's union of arrow paths). Across 500 levels: LAX solves 500/500, STRICT solves 3/500, and 497 of the LAX winning plans require crossing a void cell. Conclusion: keep LAX. (See the header comment of `packages/core/src/game.ts`.) Marks HANDOFF P0 #1 as resolved.
@@ -43,10 +43,11 @@
 | WeChat entry + HUD | `packages/wxgame/src/main.ts` |
 | Level data | `levels_data/*.json` (neutral format) |
 | Level import / validation | `packages/core/src/level.ts` |
-| Embedded-level generation for WeChat | `packages/wxgame/scripts/build-levels.mjs` (currently embeds the first 50) |
+| Embedded-level generation for WeChat | `packages/wxgame/scripts/build-levels.mjs` (embeds main 30 + emits 12 subpackages) |
+| Embedded-level generation for H5 | `packages/web/scripts/build-levels.mjs` (embeds main 30 + emits `public/packs/packN.json`) |
 | WeChat bundle script | `packages/wxgame/scripts/bundle.mjs` |
-| Compact wxgame level encoder / chunker | `packages/wxgame/scripts/_encode.mjs` |
-| Compact → RawLevelFile decoder | `packages/wxgame/src/decode.ts` |
+| Compact level encoder / chunker (shared) | `packages/wxgame/scripts/_encode.mjs` |
+| Compact → RawLevelFile decoder (shared) | `packages/core/src/compact.ts` (`decodeCompact`) |
 | Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
 | Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended). Output to gitignored `packages/tools/generated/`. |
 | Generated-level dev playground | `packages/web/dev-playground.html` + `packages/web/src/dev-playground.ts` (dev server only). |
@@ -91,7 +92,7 @@
 2. **Level geometry data (`levels_data/`) is reused from the APK.** It's protected expression; before any public release or commercialization, re-evaluate (author new levels or obtain a license).
 3. **Game model is snake-walk, not rigid translation.** Both rigid translation and rope extension were tried and rejected — rigid broke valid puzzles and showed the wrong vanish trajectory; rope made puzzles trivially solvable.
 4. **No game engines.** Native TS + Canvas 2D. The `DrawCtx` interface in `packages/renderer/src/canvas-ctx.ts` lets the same renderer drive both the H5 `HTMLCanvasRenderingContext2D` and the WeChat `wx.createCanvas()` context.
-5. **WeChat main bundle currently embeds only 50 levels** because the subpackage strategy isn't done yet — embedding all 3548 would blow past the 4MB main-package limit.
+5. **WeChat / H5 main bundles embed only the first 30 levels; the remaining 3518 ship as 12 subpackages/packs loaded on demand.** The 4 MB wxgame main-package limit forces the split; the H5 build mirrors it (one `import.meta.glob` of 3548 JSONs blew Vite's heap, see [`packages/web/scripts/build-levels.mjs`](packages/web/scripts/build-levels.mjs)). Don't fold packs back into the main bundle without re-checking the limit and the Vite memory footprint.
 
 ---
 
@@ -104,7 +105,7 @@ pnpm dev:web                                 # H5 dev server, http://localhost:5
 pnpm build:web                               # H5 production build → packages/web/dist/
 pnpm build:wxgame                            # WeChat main bundle + 12 subpackages → packages/wxgame/dist/wxgame/
 pnpm typecheck                               # tsc --noEmit across all workspaces
-pnpm test                                    # node:test, currently just @ea/core (19 tests)
+pnpm test                                    # node:test across @ea/core (24) + @ea/lives (19)
 pnpm lint                                    # Biome (format + lint + import organize), check-only
 pnpm lint:fix                                # Biome with safe autofixes applied
 pnpm --filter @ea/tools solve:big            # solve OG_LevelBig7 to verify the model

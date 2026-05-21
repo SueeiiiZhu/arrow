@@ -21,10 +21,12 @@
 app/
 ├── levels_data/                # 关卡 JSON（已从原 APK 转换为 neutral 格式）
 ├── packages/
-│   ├── core/                   # 引擎无关的规则：snake-walk 模型 + 关卡加载
+│   ├── core/                   # 引擎无关的规则：snake-walk 模型 + 关卡加载 + compact decoder
 │   ├── renderer/               # DOM-free Canvas 2D 渲染器
+│   ├── lives/                  # 体力（心）系统：纯函数 + host 中立 createLivesStore
 │   ├── web/                    # H5 入口（Vite）
-│   └── wxgame/                 # 微信小游戏入口（esbuild 单文件打包）
+│   ├── wxgame/                 # 微信小游戏入口（esbuild 单文件打包 + 12 分包）
+│   └── tools/                  # 求解器 / 语料统计 / 关卡生成器（私有）
 └── package.json                # pnpm workspace 根
 ```
 
@@ -58,9 +60,13 @@ Vite 默认监听 `http://localhost:5173`（端口被占就自动降到 5174、5
 pnpm build:web   # 产物在 packages/web/dist/
 ```
 
+构建流程会自动跑 `predev` / `prebuild` 钩子 → `packages/web/scripts/build-levels.mjs`，把 3548 关切成 **主包 30 关（内嵌进 `src/levels.generated.ts`）+ 12 个 pack**（写到 `packages/web/public/packs/packN.json`，每个约 1.3 MB）。运行时 picker 立即可见全部关卡，跨过主包 30 关时按需 `fetch('/packs/packN.json')` 并 Map 缓存。整套机制和下面的微信分包共享 `packages/wxgame/scripts/_encode.mjs` 编码器。
+
+> 历史踩坑：之前 `web/src/main.ts` 用 `import.meta.glob` 同步引入 3548 个 JSON，导致 `vite build` OOM。**不要回滚到 glob 方案，也不要再给 `vite.config.ts` 加 `assetsInclude: ["**/*.json"]`**——后者会让 JSON 当成资产产物，页面 silently 空白。
+
 ## 2. 微信小游戏
 
-为了控制主包体积，目前只内嵌**前 50 关**（`packages/wxgame/scripts/build-levels.mjs` 控制范围；更多关卡需要走小游戏分包机制）。
+主包只内嵌**前 30 关**（约 560 KB），剩下 3518 关切成 **12 个 subpackage** 各 ~1.3 MB，运行时用 `wx.loadSubpackage` 按需拉取。整包合计约 15 MB，控制在 wxgame 20 MB 上限内。编码器在 `packages/wxgame/scripts/_encode.mjs`（与 H5 共享），分包发射在 `packages/wxgame/scripts/bundle.mjs`。
 
 ### 构建
 
@@ -72,8 +78,9 @@ pnpm build:wxgame
 
 ```
 packages/wxgame/dist/wxgame/
-├── game.js     # esbuild CJS 单文件，约 ~700KB
-└── game.json   # 小游戏配置清单
+├── game.js               # esbuild CJS 主包 + 30 关，约 560 KB
+├── game.json             # 小游戏配置清单（含 subpackages 字段）
+└── pack0/ … pack11/      # 12 个 subpackage，每个 index.js 把数据写到 globalThis.__EA_PACK_DATA[N]
 ```
 
 ### 在微信开发者工具里跑
@@ -91,12 +98,14 @@ packages/wxgame/dist/wxgame/
 
 | 命令 | 作用 |
 | --- | --- |
-| `pnpm dev:web` | 起 Vite，浏览器调试 H5 |
-| `pnpm build:web` | 生产构建 H5（`packages/web/dist/`） |
-| `pnpm build:wxgame` | 生成 50 关 + 打小游戏单文件（`packages/wxgame/dist/wxgame/`） |
+| `pnpm dev:web` | 起 Vite，浏览器调试 H5（自动跑 `predev` → 生成 `levels.generated.ts` + `public/packs/`） |
+| `pnpm build:web` | 生产构建 H5（`packages/web/dist/`，自动跑 `prebuild`） |
+| `pnpm build:wxgame` | 主包 30 关 + 12 分包 + `game.json`（`packages/wxgame/dist/wxgame/`） |
 | `pnpm build:core` | 单独构建 core 到 `dist/`（运行非 ts 脚本时需要） |
 | `pnpm build:renderer` | 单独构建 renderer 到 `dist/` |
 | `pnpm typecheck` | 全包 tsc --noEmit |
+| `pnpm lint` / `pnpm lint:fix` | Biome 检查 / 安全自动修复 |
+| `pnpm test` | node:test（`@ea/core` 24 用例 + `@ea/lives` 19 用例） |
 
 ## 关于规则模型
 

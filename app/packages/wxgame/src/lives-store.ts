@@ -1,76 +1,36 @@
 /**
- * wxgame-side lives store: persists LivesState via wx.setStorageSync,
- * exposes the same shape as the web store so the renderer/HUD doesn't
- * care which host it runs on.
+ * wxgame-side lives store: thin shim that wires wx.setStorageSync into the
+ * host-neutral createLivesStore factory in @ea/lives. Exposes the same
+ * named surface as the web shim so the HUD/main code is host-agnostic.
  */
 
-import {
-  consume,
-  createFresh,
-  defaultConfig,
-  fromJSON,
-  type LivesConfig,
-  type LivesState,
-  msToNextRegen,
-  refill,
-  tick,
-} from "@ea/lives";
+import { createLivesStore } from "@ea/lives";
 
 const STORAGE_KEY = "escape_arrows_lives";
 
-const config: LivesConfig = defaultConfig;
+const store = createLivesStore({
+  storage: {
+    read: () => {
+      try {
+        const v = wx.getStorageSync(STORAGE_KEY);
+        return typeof v === "string" && v.length > 0 ? v : null;
+      } catch {
+        return null;
+      }
+    },
+    write: (value) => {
+      try {
+        wx.setStorageSync(STORAGE_KEY, value);
+      } catch {
+        /* swallow */
+      }
+    },
+  },
+});
 
-function readPersisted(now: number): LivesState {
-  try {
-    const v = wx.getStorageSync(STORAGE_KEY);
-    if (typeof v !== "string" || v.length === 0) return createFresh(config, now);
-    return fromJSON(JSON.parse(v), config, now);
-  } catch {
-    return createFresh(config, now);
-  }
-}
-
-function writePersisted(state: LivesState): void {
-  try {
-    wx.setStorageSync(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* swallow */
-  }
-}
-
-let state: LivesState = readPersisted(Date.now());
-
-export function getState(): LivesState {
-  return state;
-}
-
-export function getConfig(): LivesConfig {
-  return config;
-}
-
-export function tickNow(): LivesState {
-  const next = tick(state, config, Date.now());
-  if (next !== state) {
-    state = next;
-    writePersisted(state);
-  }
-  return state;
-}
-
-export function tryConsume(): boolean {
-  const { ok, state: next } = consume(state, config, Date.now());
-  if (ok) {
-    state = next;
-    writePersisted(state);
-  }
-  return ok;
-}
-
-export function addLives(amount = 1): void {
-  state = refill(state, config, Date.now(), amount);
-  writePersisted(state);
-}
-
-export function nextRegenMs(): number | null {
-  return msToNextRegen(state, config, Date.now());
-}
+export const getState = store.getState;
+export const getConfig = store.getConfig;
+export const tickNow = store.tickNow;
+export const tryConsume = store.tryConsume;
+export const addLives = store.addLives;
+export const nextRegenMs = store.nextRegenMs;
