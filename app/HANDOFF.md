@@ -1,6 +1,6 @@
 # Escape Arrows — Handoff / TODO
 
-> Last advanced 2026-05-21 (level-order shuffle + `--preset=strict` for reverse generator + partition-first v0 documented as **null result** — same chainDepth/bottleneck/fill as reverse). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
+> Last advanced 2026-05-21 (partition-first **v1 landed**: real path-partition + Kahn joint facing/escape-order assignment — beats both reverse-gen and the n=1 corpus level on chainDepth / bottleneck / init-escapable at 10×10–20×20. Deadlocks on dense large grids — 25×31 still 1/3 yield at lower fill — so reverse-gen stays the recommended tool for corpus-median sizes). Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
 
 ---
 
@@ -29,8 +29,8 @@
 - **Procedural level generator** — three algorithms, all written to clean-room `packages/tools/generated/` (gitignored). Detailed docs in `packages/tools/README.md`.
     - `packages/tools/src/generate.mjs` + `pnpm --filter @ea/tools generate` — path-partition + greedy/DFS filter. Yields up to 20×20, fails at 30×30. Kept around for comparison.
     - `packages/tools/src/generate-reverse.mjs` + `pnpm --filter @ea/tools generate:reverse` — **reverse-construction** (places arrows in reverse escape order so solvability is guaranteed). 5/5 first-try at 30×30, 31×38 corpus median, and 50×50. Verifier (replays the constructed escape order through `tryPull`) has never fired — invariant we rely on. Now has `--preset=strict` (chainDepth ≥ 8, bottleneck ≥ 15 %, 120 attempts/level) which pushes a batch ~1 σ closer to corpus at ~5× the cost.
-    - `packages/tools/src/generate-partition.mjs` + `pnpm --filter @ea/tools generate:partition` — **chain-skeleton variant** on top of reverse. **Honest v0 result (2026-05-21): TIES `generate-reverse` on every structural metric** (chainDepth med 7 vs 7, bottleneck 11 % vs 12 %, fill 85 % vs 85 % at 25×31). The chain-skeleton phase is a local geometric operation; once we exit it the filler reuses the same `placeOne` logic and the distribution converges. Cranking `--target-fill` past 0.85 doesn't help either — the reverse-construction primitive has a topological cap. Kept committed as an experiment scaffold + the `quality:eval --from-dir` flag is generally useful. A genuine partition-then-topo-sort generator (v1) is still unwritten.
-    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. Now also accepts `--from-dir=<dir>` to evaluate any external generator. 25×31 snapshot (2026-05-21): both reverse + partition sit at arrows 64 vs corpus 57, fill 85 % vs 97 %, init-escapable 30 % vs 9 %, bottleneck 11 % vs 26 %, chainDepth 7 vs 10. greedy moves/arrow tied at 1.00 (snake-walk single-shot always solves on both sides).
+    - `packages/tools/src/generate-partition.mjs` + `pnpm --filter @ea/tools generate:partition` — **real partition-then-topo-sort** (v1, rewritten 2026-05-21). Phase 1 grows self-avoiding paths until target-fill, rejecting any path whose endpoint facing rays would self-cross (snake-walk U-bend collision). Phase 2 jointly assigns facing + escape order via Kahn-style topo construction: at each step pick a path whose at-least-one facing has all ray-blockers already escaped, prefer the "blocked" facing over the open-ray one (modulated by `--init-esc-rate`); never produces a cycle because facing and order are chosen together. Phase 3 (extendTails) lifts fill. **Quality at 20×20 (n=15 vs n=1 corpus): chainDepth 9 vs 6, bottleneck 21 % vs 17 %, init-escapable 14 % vs 24 %, fill 98 % vs 99 % — beats corpus on the three structural quality metrics that matter**. Cliff at 25×31: random partition tends to form strongly-connected blocker DAGs that no Kahn restart can break (1/3 yield at `--target-fill=0.7` over 240 attempts). For corpus-median sizes (25×31, 31×38) keep using `generate:reverse`; for 10×10–20×20 prefer `generate:partition`.
+    - `packages/tools/src/quality-eval.mjs` + `pnpm --filter @ea/tools quality:eval -- --w=W --h=H` — distributional comparison of generated batch vs same-size corpus sample on arrow count / fill / init-escapable / bottleneck / greedy heuristic / path length. Now also accepts `--from-dir=<dir>` to evaluate any external generator. 20×20 partition-v1 snapshot (2026-05-21): arrows 55 vs corpus 29 (n=1), fill 98 % vs 99 %, init-escapable 14 % vs 24 %, bottleneck 21 % vs 17 %, chainDepth 9 vs 6, path-len p50 7 vs 11. Greedy moves/arrow tied at 1.00 on both sides (regression canary only).
     - **Independent dev-playground** at `packages/web/dev-playground.html` (only served by `pnpm dev:web` — `vite build` ignores it, never ships). Loads everything in `packages/tools/generated/` via `import.meta.glob`. Open at `http://localhost:5173/dev-playground.html`. Empty state if the dir is empty.
     - **Legal hygiene rule: generated levels must never be moved into `levels_data/`** (the boundary is what keeps clean-room synthetic levels separate from APK-derived corpus). The dev-playground page is the sanctioned way to play them without touching the production corpus.
 
@@ -50,7 +50,7 @@
 | Compact level encoder / chunker (shared) | `packages/wxgame/scripts/_encode.mjs` |
 | Compact → RawLevelFile decoder (shared) | `packages/core/src/compact.ts` (`decodeCompact`) |
 | Solver / corpus analysis scripts | `packages/tools/src/*.mjs` (see `packages/tools/README.md`) |
-| Procedural level generator | `packages/tools/src/generate.mjs` (partition) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended) + `packages/tools/src/generate-partition.mjs` (chain-skeleton v0 — null result, see HANDOFF). Output to gitignored `packages/tools/generated/`. |
+| Procedural level generator | `packages/tools/src/generate.mjs` (legacy partition+filter, ≤20×20) + `packages/tools/src/generate-reverse.mjs` (reverse-construction, recommended for corpus-median grids) + `packages/tools/src/generate-partition.mjs` (real partition-then-topo-sort **v1**, beats corpus structurally at 10×10–20×20; deadlocks at 25×31). Output to gitignored `packages/tools/generated/`. |
 | Generated-level dev playground | `packages/web/dev-playground.html` + `packages/web/src/dev-playground.ts` (dev server only). |
 | Generator quality eval | `packages/tools/src/quality-eval.mjs`. |
 | Biome config (format + lint) | `biome.json` |
@@ -77,13 +77,16 @@
     
     选定方向之前先不动。涉及到 `packages/wxgame/scripts/build-levels.mjs`（决定 `ALL_KEYS` 顺序）和两端 picker。
 
-- **生成器下一步：换构造原语**。2026-05-20 的 placement-side 调参（rayMap-aware extendPath / init-esc-aware extendTails / 构造期 `maxLen=12`）把 arrows / fill / path-len 拉近了；2026-05-21 又加了 `--preset=strict`（chainDepth 8, bottleneck 15 %）把 reverse 自身分布拉到了自己的高分尾，但仍距 corpus 一截。同日尝试的 **chain-skeleton partition v0 是 null result**（见 Done §generate-partition；跟 reverse 的 chainDepth/bottleneck/fill 一样）。剩下的差距如下，全都指向「reverse-construction 原语自身的拓扑上限」而不是参数调优能解决的：
-    1. **Fill 85 % vs 97 %**：reverse / partition 都被拓扑上限锁在 85 %（每根新 arrow 的 ray 必须避开所有先前放置的 body）。要更高需要真的「先 partition 占满网格再排定 escape 顺序」——chain-skeleton v0 没做到，v1 待写。
-    2. **Init-escapable 30 % vs 9 %**：~12 pp 是 zero-ray 锚（算法层面 unblockable，留着是为 fill）。剩下的 ~18 pp 同样要求改原语才能压下去。
-    3. **Bottleneck 11 % vs 25 %** + **chainDepth 7 vs 10**：keystone / 链都不够长。chain-skeleton v0 验证了「沿单链强制下子」不够——filler 阶段照样收敛到 reverse 的分布。
-    4. **Greedy moves/arrow 1.00 = 1.00**：snake-walk escape-first greedy 几乎不需要 re-pull，corpus 和生成 batch 都是 100 % single-shot。这条指标当 regression canary，别拿它做 fun 筛子。
-    5. 候选 v1 方向（按工作量从小到大）：(a) 真的先 partition 网格、为每块分配 facing、做拓扑排序、最后嵌入；(b) 在 reverse 顶上接 SAT/SMT 重排 facing 让 chain 强制变长；(c) 完全放弃严格 snake-walk 可解性，用搜索（带回溯）找高密度高结构布局。
-    6. 在 fill / init-esc 两条主线缩短到肉眼接近之前，**不要**把生成关接进正式 picker / `levels_data/`。可以先把样本扔进 dev-playground 让人主观盲测打分。
+- **生成器 v1 (partition-then-topo-sort) 已落地（2026-05-21）**。`generate-partition.mjs` 重写为真 partition + Kahn 联合 facing/escape-order。20×20 上 chainDepth 9 vs corpus 6, bottleneck 21 % vs 17 %, init-esc 14 % vs 24 %, fill 98 % vs 99 % —— 三项结构指标全部超过 corpus（corpus n=1 注意误差）。但有显著 cliff：
+    1. **25×31 yield 1/3 at `--target-fill=0.7`**：随机 partition 在大 dense 网格上容易产出 unbreakable SCC（每条剩余 path 的两个 facing 都互相依赖），Kahn restart 也救不了。`reverse-gen` 仍是 corpus-median 网格的推荐工具。
+    2. **path-len p50 7 vs 11**：partition v1 倾向于更短更多的 arrow（更多 cross = 更深 DAG），是原语的直接结果，不算 bug，但视觉风格与 corpus 不完全一致。
+    3. **v1 已不再受 reverse-construction 拓扑上限限制**（fill 98 %, init-esc 14 %），所以 2026-05-20 的「换原语」议题对中等网格而言已闭合。
+- **生成器 v2 候选方向**（不紧急，按工作量从小到大）：
+    1. **partition 几何回溯**：当 Kahn deadlock 时撤销最后几条 path 重新生长，专门为 25×31 打开 yield；预计实现 1–2 天。
+    2. **facing-aware path growth**：Phase 1 生长时倾向产生少跨射线的 path，主动避免后续 SCC；改动比回溯小但效果不确定。
+    3. **SAT/SMT 重排 facing**：在 reverse-gen 顶上接 SAT 强制更深 chain；与 v1 优势重合，性价比低。
+    4. **完全放弃严格 snake-walk 可解性**，用搜索 + 回溯找高密度布局；最自由也最贵。
+- **不要把生成关接进正式 picker / `levels_data/`** —— legal boundary 没变。样本扔进 dev-playground 让人主观盲测打分即可。
 - **关卡顺序按难度桶 shuffle 已上线** — `packages/core/src/order.ts` (`shuffleByDifficulty` + `ensureShuffleSeed`)，每个用户首次启动写一次 32-bit 种子进 `ProgressData.shuffleSeed`，5 个 quantile 桶按 `[WxH]` 面积排序、桶内 Fisher-Yates。Web + wxgame 入口都接好了。开放问题列表里的「关卡顺序是否要打乱」选项 1 已闭合。
 
 ---
@@ -115,7 +118,8 @@ pnpm --filter @ea/tools solve:all -- --limit=all   # full-corpus solvability swe
 pnpm --filter @ea/tools analyze:void         # LAX vs STRICT head-extension simulation
 pnpm --filter @ea/tools stat:corpus          # 3548-level distributional statistics
 pnpm --filter @ea/tools generate -- --w=10 --h=10 --count=5 --seed=42   # path-partition generator → stdout (add --out to write files)
-pnpm --filter @ea/tools generate:reverse -- --w=31 --h=38 --count=5 --seed=1   # reverse-construction generator (recommended; scales to corpus-median)
+pnpm --filter @ea/tools generate:reverse -- --w=31 --h=38 --count=5 --seed=1   # reverse-construction generator (recommended for corpus-median grids)
+pnpm --filter @ea/tools generate:partition -- --w=20 --h=20 --count=5 --seed=1 --out   # partition-then-topo-sort v1 (best structural quality on 10–20×20)
 pnpm --filter @ea/tools quality:eval -- --w=25 --h=31 --count=30 --seed=1      # generated batch vs corpus distributions
 # Then, with dev server running: open http://localhost:5173/dev-playground.html to play the generated/ output
 ```

@@ -1,70 +1,46 @@
-// Partition-first (chain-skeleton) procedural level generator.
+// Partition-then-topo-sort procedural level generator (v1).
 //
-// Sister to generate-reverse.mjs. The reverse generator is locally greedy
-// — it picks anchors whose path[1] sits on a preceding arrow's facing ray,
-// which produces medium chains but tops out below the corpus on the
-// "forced-chain depth" + "bottleneck %" metrics (see HANDOFF.md and the
-// `--preset=strict` comment in generate-reverse.mjs).
+// Sibling to generate-reverse.mjs. Different construction primitive:
+//   1. Path-partition the grid — repeatedly grow a self-avoiding path from
+//      a random empty cell until target fill is reached. Each path is one
+//      arrow's body (geometry only; no facing yet). Reject a path whose
+//      both endpoint facing rays would self-cross another cell of the same
+//      path (U-bend snake-walk self-collision; see facingCandidates).
+//   2. Jointly assign facing + escape order via Kahn-style topo construction
+//      (assignFacings / assignFacingsOnce). At each step pick a path whose
+//      at-least-one facing has ALL ray-blockers already escaped, prefer the
+//      "blocked" facing over the open-ray one (modulated by --init-esc-rate)
+//      to maximize sequencing. Choosing facing and order jointly means we
+//      never produce a cycle in the blocker DAG — Phase 3 here doesn't exist
+//      as a separate step. If the remaining unpicked paths form a strongly
+//      connected component (no facing of any of them is unblocked), we
+//      restart with a fresh tie-break (`--kahn-retries=N`) before rejecting.
+//   3. extendTails greedily extends path tails into free cells to lift fill.
+//   4. Verify via tryPull (real snake-walk engine, ground truth).
 //
-// This generator pre-commits to a chain skeleton of length K before doing
-// the random fill. Concretely (still in reverse escape order, A_K → A_1):
-//   1. Place A_K with any valid anchor (free choice).
-//   2. For each subsequent A_{K-k} (k = 1..K-1) place an anchor whose
-//      `start` cell sits on the immediately-previous arrow's facing ray.
-//      Geometrically this means A_{K-k}'s head cell is on A_{K-k+1}'s
-//      facing ray → A_{K-k}'s body blocks A_{K-k+1}'s head → the static
-//      blocker DAG contains the edge A_{K-k+1} ← A_{K-k}. The skeleton is
-//      a single chain by construction, so chainDepth ≥ K.
-//   3. Fill the rest of the grid with the standard `placeOne` logic
-//      copied from generate-reverse.mjs.
-//   4. Reverse → escape order, then extendTails as usual.
+// Why this primitive can beat reverse: reverse forbids placing a new arrow
+// whose ray crosses any previously placed body, which caps fill around 85 %
+// on 25×31. Partition-first only commits to facings AFTER the geometry is
+// pinned, so paths may freely cross other paths' rays — fill is bounded by
+// path-growing efficiency, not by the ray-clearance constraint.
 //
-// What partition-first DOES NOT do (v0 limitations):
-//   - It doesn't plan a global partition of the grid into regions; the
-//     "partition" label is aspirational. Region partitioning is the
-//     planned v1.
-//   - It doesn't try to maximize bottleneck % directly — only chainDepth.
-//     Bottleneck % piggy-backs because every chain link is by definition
-//     blocking exactly one other arrow; the keystones come from the
-//     filler arrows happening to block multiple.
-//
-// HONEST v0 RESULT (measured 2026-05-21 on 25×31, count=30, seed=1):
-//   metric              partition   reverse   corpus
-//   chainDepth (med)        7          7        10
-//   bottleneck %            11%        12%      26%
-//   init-escapable %        31%        30%       9%
-//   fill %                  85%        85%      97%
-//   At every structural metric, partition v0 essentially TIES reverse
-//   and is materially below corpus. The chain-skeleton phase is a
-//   geometric LOCAL operation: each link constrains placement of the
-//   next link, but the filler phase quickly converges to the same
-//   distribution as the reverse-generator (same placeOne, same anchor
-//   buckets). Cranking --target-fill above 0.85 doesn't help either:
-//   the reverse-construction model has a topological cap (~85% fill
-//   on 25×31, ~90% on smaller grids) because every new arrow's ray
-//   must stay clear of all preceding-placed bodies.
-//   So this file is currently a NEGATIVE RESULT documented in code:
-//   the construction-primitive lever, as implemented, is not enough
-//   to close the corpus gap. A genuine win likely needs either:
-//     (a) Tile-then-topo-sort: pre-commit to a grid partition + facings,
-//         then solve for an embedding (planned v1 below); OR
-//     (b) Drop the strict snake-walk solvability guarantee at construction
-//         time and run a search (e.g. SAT / SMT) over a richer state-space.
-//   Keeping the script committed despite the null result so future
-//   iterations can reuse `quality-eval --from-dir=…` and not redo this
-//   experiment from scratch.
+// Known limitation: on dense large grids (e.g. 25×31 at high target-fill),
+// the random partition tends to produce blocker DAGs with strongly-connected
+// components that no Kahn restart can break (every remaining path's both
+// facings depend on each other). Empirically robust on 10×10–20×20 at
+// target-fill 0.95; 25×31 still deadlocks. Would need either real
+// backtracking over partition geometry, or facing-aware path growth, to
+// fix — see HANDOFF.md.
 //
 // Output goes to --out=<dir> (default packages/tools/generated/) and MUST
 // NEVER be moved into levels_data/ (legal hygiene boundary; see
 // packages/tools/README.md and ../../README.md).
 //
-// CLI mirrors generate-reverse.mjs; the partition-specific flag:
-//   --chain-target=K   target chain length (default min(W, H), clamped 6..20)
-//   --chain-min=K      reject candidate if achieved chain length < K
-//                      (default = chain-target − 2)
-// Other reject gates (--min-chain-depth, --min-bottleneck, --min-sequencing,
-// --max-deadlock-rate) and shape knobs (--target-fill, --max-arrow-len,
-// --ray-bias, --straight-bias) work the same as generate-reverse.
+// CLI mirrors generate-reverse.mjs where flags overlap; partition-specific:
+//   --kahn-retries=20    Phase-2 retry budget when paths get stuck in SCC
+//   --init-esc-rate=0.1  Tie-break bias toward open-ray facings (lower = more
+//                        sequenced; 0 = strict, only pick open when forced)
+// (No --chain-target / --chain-min: chain emerges from partition geometry.)
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -102,124 +78,226 @@ const DIRS = [
   [0, -1],
 ];
 
-// --- Shared helpers (copy of generate-reverse.mjs internals; keep in sync) -
+// --- Phase 1: path-partition ----------------------------------------------
 
-function collectAnchors(W, H, grid) {
+// Grow a single self-avoiding path from a random empty seed cell. Returns
+// the path or null if no path of length >= minLen could be grown.
+function growPath(W, H, grid, rand, opts) {
   const idx = (x, y) => y * W + x;
   const inGrid = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
   const isEmpty = (x, y) => grid[idx(x, y)] === 0;
-  const out = [];
+  const { minLen, maxLen, straightBias } = opts;
+
+  const seeds = [];
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      if (!isEmpty(x, y)) continue;
-      for (const [fx, fy] of DIRS) {
-        let cx = x + fx;
-        let cy = y + fy;
-        let clear = true;
-        let rayLen = 0;
-        while (inGrid(cx, cy)) {
-          if (!isEmpty(cx, cy)) {
-            clear = false;
-            break;
-          }
-          rayLen++;
-          cx += fx;
-          cy += fy;
-        }
-        if (!clear) continue;
-        const bx = x - fx;
-        const by = y - fy;
-        if (!inGrid(bx, by) || !isEmpty(bx, by)) continue;
-        out.push({ start: [x, y], facing: [fx, fy], second: [bx, by], rayLen });
+      if (isEmpty(x, y)) seeds.push([x, y]);
+    }
+  }
+  if (seeds.length === 0) return null;
+  shuffleInPlace(seeds, rand);
+
+  for (const seed of seeds) {
+    const path = [seed];
+    const used = new Set([idx(seed[0], seed[1])]);
+    const targetLen = minLen + Math.floor(rand() * (maxLen - minLen + 1));
+    let lastDir = null;
+    while (path.length < maxLen) {
+      const [hx, hy] = path[path.length - 1];
+      const free = DIRS.filter(([dx, dy]) => {
+        const nx = hx + dx;
+        const ny = hy + dy;
+        return inGrid(nx, ny) && isEmpty(nx, ny) && !used.has(idx(nx, ny));
+      });
+      if (free.length === 0) break;
+      if (path.length >= targetLen && rand() < 0.4) break;
+      let pick = null;
+      if (lastDir && rand() < straightBias) {
+        pick = free.find((d) => d[0] === lastDir[0] && d[1] === lastDir[1]) ?? null;
       }
+      if (!pick) pick = free[Math.floor(rand() * free.length)];
+      const nx = hx + pick[0];
+      const ny = hy + pick[1];
+      path.push([nx, ny]);
+      used.add(idx(nx, ny));
+      lastDir = pick;
     }
-  }
-  return out;
-}
-
-function extendPath(path, used, W, H, grid, rand, opts, rayMap) {
-  const { minLen, maxLen, straightBias, rayBias } = opts;
-  const idx = (x, y) => y * W + x;
-  const inGrid = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
-  const isEmpty = (x, y) => grid[idx(x, y)] === 0;
-  const targetLen = minLen + Math.floor(rand() * (maxLen - minLen + 1));
-  let lastDir =
-    path.length >= 2
-      ? [
-          path[path.length - 1][0] - path[path.length - 2][0],
-          path[path.length - 1][1] - path[path.length - 2][1],
-        ]
-      : null;
-  while (path.length < maxLen) {
-    const [hx, hy] = path[path.length - 1];
-    const free = DIRS.filter(([dx, dy]) => {
-      const nx = hx + dx;
-      const ny = hy + dy;
-      return inGrid(nx, ny) && isEmpty(nx, ny) && !used.has(idx(nx, ny));
-    });
-    if (free.length === 0) break;
-    if (path.length >= targetLen && rand() < 0.4) break;
-    let pick;
-    const onRay = free.filter((d) => (rayMap.get(idx(hx + d[0], hy + d[1])) || 0) > 0);
-    if (onRay.length > 0 && rand() < rayBias) {
-      pick = onRay[Math.floor(rand() * onRay.length)];
-    } else if (lastDir && rand() < straightBias) {
-      const straight = free.find((d) => d[0] === lastDir[0] && d[1] === lastDir[1]);
-      pick = straight ?? null;
-    }
-    if (!pick) {
-      pick = free[Math.floor(rand() * free.length)];
-    }
-    const nx = hx + pick[0];
-    const ny = hy + pick[1];
-    path.push([nx, ny]);
-    used.add(idx(nx, ny));
-    lastDir = pick;
-  }
-}
-
-function placeOne(W, H, grid, rand, opts, rayMap) {
-  const anchors = collectAnchors(W, H, grid);
-  if (anchors.length === 0) return null;
-  const idx = (x, y) => y * W + x;
-  const bucket = [[], [], []];
-  for (const a of anchors) {
-    const ci = idx(a.second[0], a.second[1]);
-    const onRay = (rayMap.get(ci) || 0) > 0;
-    if (a.rayLen >= 1 && onRay) bucket[0].push(a);
-    else if (a.rayLen >= 1) bucket[1].push(a);
-    else bucket[2].push(a);
-  }
-  for (const b of bucket) shuffleInPlace(b, rand);
-  for (const { start, facing, second } of bucket[0].concat(bucket[1], bucket[2])) {
-    const path = [start, second];
-    const used = new Set([idx(start[0], start[1]), idx(second[0], second[1])]);
-    let rx = start[0] + facing[0];
-    let ry = start[1] + facing[1];
-    while (rx >= 0 && rx < W && ry >= 0 && ry < H) {
-      used.add(idx(rx, ry));
-      rx += facing[0];
-      ry += facing[1];
-    }
-    extendPath(path, used, W, H, grid, rand, opts, rayMap);
-    if (path.length >= opts.minLen) {
-      return { start, facing, path };
-    }
+    if (path.length >= minLen) return path;
   }
   return null;
 }
 
-function recordRay(arrow, W, H, grid, rayMap, rayCells) {
+function partition(W, H, rand, opts) {
+  const grid = new Uint8Array(W * H);
   const idx = (x, y) => y * W + x;
-  let cx = arrow.path[0][0] + arrow.facing[0];
-  let cy = arrow.path[0][1] + arrow.facing[1];
-  while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
-    const ci = idx(cx, cy);
-    if (grid[ci] === 0) rayMap.set(ci, (rayMap.get(ci) || 0) + 1);
-    if (rayCells) rayCells.push([cx, cy]);
-    cx += arrow.facing[0];
-    cy += arrow.facing[1];
+  const paths = [];
+  const targetCells = Math.floor(W * H * opts.targetFill);
+  let filled = 0;
+  let failuresSinceProgress = 0;
+  const maxFailures = 30;
+
+  while (filled < targetCells) {
+    const path = growPath(W, H, grid, rand, opts);
+    if (!path) break;
+    const pathId = paths.length + 1;
+    // Tentatively place on grid so facingCandidates can see it.
+    for (const [x, y] of path) grid[idx(x, y)] = pathId;
+    // Reject if both endpoints' facing rays cross this path itself
+    // (snake-walk self-collision; see facingCandidates comment).
+    const cands = facingCandidates(path, W, H, grid, pathId);
+    if (cands.length === 0) {
+      for (const [x, y] of path) grid[idx(x, y)] = 0;
+      failuresSinceProgress++;
+      if (failuresSinceProgress >= maxFailures) break;
+      continue;
+    }
+    filled += path.length;
+    paths.push(path);
+    failuresSinceProgress = 0;
+    if (paths.length >= opts.maxArrows) break;
   }
+  return { paths, grid, filled };
+}
+
+// --- Phase 2: facing assignment -------------------------------------------
+
+// For a given path, compute both candidate facings (head at start vs end).
+// Each candidate records ALL other-path indices encountered on the facing
+// ray (any one of them, if still on the board when this arrow tries to
+// escape, will block it — so they're all topological prerequisites). A
+// candidate is rejected if the head's facing ray crosses any cell of the
+// same path — that's a snake-walk self-collision (head moves in a straight
+// line along facing while the body snakes; a U-bend that loops back into
+// the ray blocks the head before the colliding body segment can vacate).
+function facingCandidates(path, W, H, grid, pathId) {
+  const idx = (x, y) => y * W + x;
+  const cands = [];
+  for (const headIdx of [0, path.length - 1]) {
+    const oriented = headIdx === 0 ? path : path.slice().reverse();
+    const [hx, hy] = oriented[0];
+    const [sx, sy] = oriented[1];
+    const facing = [hx - sx, hy - sy];
+    let cx = hx + facing[0];
+    let cy = hy + facing[1];
+    let selfCrossing = false;
+    const blockers = []; // path indices in order encountered
+    const seen = new Set();
+    while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
+      const owner = grid[idx(cx, cy)];
+      if (owner === pathId) {
+        selfCrossing = true;
+        break;
+      }
+      if (owner !== 0 && !seen.has(owner)) {
+        seen.add(owner);
+        blockers.push(owner - 1); // path index
+      }
+      cx += facing[0];
+      cy += facing[1];
+    }
+    if (selfCrossing) continue;
+    cands.push({
+      oriented,
+      facing,
+      firstBlockerPath: blockers.length > 0 ? blockers[0] : -1,
+      allBlockers: blockers,
+    });
+  }
+  return cands;
+}
+
+// Assign facings via Kahn-style topo construction:
+//   - At each step, find a path whose at-least-one facing candidate's
+//     allBlockers are all already in the "escaped" set (i.e. picked).
+//   - Mark that path as picked with that facing; add it to escape order.
+//   - Repeat until all paths picked or no progress.
+//
+// This is fundamentally different from "assign facings then topo sort":
+// we choose facing and escape order JOINTLY, so we never produce a cycle
+// in the first place. The cost is that a partition geometry where every
+// remaining path's both facings still depend on unpicked peers becomes
+// stuck — but unpicked SCCs can often be broken by retrying with a
+// shuffled tie-break order, since which facing got committed early
+// determines the dependency chain. We try up to `opts.kahnRetries` random
+// restarts before giving up on this partition.
+function assignFacingsOnce(allCands, rand, opts) {
+  const N = allCands.length;
+  const picked = new Uint8Array(N);
+  const arrows = new Array(N).fill(null);
+  const escapeOrder = [];
+
+  const canPick = (i) => {
+    for (const c of allCands[i]) {
+      let ok = true;
+      for (const b of c.allBlockers) {
+        if (!picked[b]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return c;
+    }
+    return null;
+  };
+
+  let progress = true;
+  while (progress) {
+    progress = false;
+    const pickable = [];
+    for (let i = 0; i < N; i++) {
+      if (picked[i]) continue;
+      const c = canPick(i);
+      if (c) pickable.push({ i, cand: c });
+    }
+    if (pickable.length === 0) break;
+    const blocked = pickable.filter((p) => p.cand.firstBlockerPath >= 0);
+    const open = pickable.filter((p) => p.cand.firstBlockerPath < 0);
+    let chosenPool;
+    if (blocked.length > 0 && (open.length === 0 || rand() >= opts.initEscRate)) {
+      chosenPool = blocked;
+    } else if (open.length > 0) {
+      chosenPool = open;
+    } else {
+      chosenPool = pickable;
+    }
+    const pick = chosenPool[Math.floor(rand() * chosenPool.length)];
+    const { i, cand } = pick;
+    arrows[i] = {
+      pathIdx: i,
+      orientedPath: cand.oriented,
+      facing: cand.facing,
+      allBlockers: cand.allBlockers.slice(),
+      alternative: allCands[i].find((c) => c !== cand) ?? null,
+    };
+    picked[i] = 1;
+    escapeOrder.push(i);
+    progress = true;
+  }
+  return { arrows, escapeOrder };
+}
+
+function assignFacings(paths, W, H, grid, rand, opts) {
+  const allCands = paths.map((p, i) => facingCandidates(p, W, H, grid, i + 1));
+  let best = null;
+  for (let t = 0; t < (opts.kahnRetries || 1); t++) {
+    const r = assignFacingsOnce(allCands, rand, opts);
+    if (r.escapeOrder.length === paths.length) return r;
+    if (!best || r.escapeOrder.length > best.escapeOrder.length) best = r;
+  }
+  return best;
+}
+
+// --- Phase 3: ray bookkeeping for extendTails ------------------------------
+//
+// extendTails wants `arrows` in escape order and grid in {0, 1} (path cells
+// = 1). Convert from our internal state.
+
+function arrowsToRawForm(arrows, escapeOrder) {
+  return escapeOrder.map((i) => ({
+    start: arrows[i].orientedPath[0],
+    facing: arrows[i].facing,
+    path: arrows[i].orientedPath,
+  }));
 }
 
 function extendTails(W, H, grid, arrows, rand) {
@@ -311,116 +389,57 @@ function extendTails(W, H, grid, arrows, rand) {
   return added;
 }
 
-// --- Partition-first construction ------------------------------------------
-
-// Pick an anchor from `anchors` and turn it into a full arrow (with path
-// extended). Returns null if no anchor yields path.length >= opts.minLen.
-function buildArrowFromAnchor(anchors, W, H, grid, rand, opts, rayMap) {
-  const idx = (x, y) => y * W + x;
-  for (const { start, facing, second } of anchors) {
-    const path = [start, second];
-    const used = new Set([idx(start[0], start[1]), idx(second[0], second[1])]);
-    let rx = start[0] + facing[0];
-    let ry = start[1] + facing[1];
-    while (rx >= 0 && rx < W && ry >= 0 && ry < H) {
-      used.add(idx(rx, ry));
-      rx += facing[0];
-      ry += facing[1];
-    }
-    extendPath(path, used, W, H, grid, rand, opts, rayMap);
-    if (path.length >= opts.minLen) {
-      return { start, facing, path };
-    }
-  }
-  return null;
-}
+// --- Top-level generate ----------------------------------------------------
 
 function generate(W, H, rand, opts) {
-  const grid = new Uint8Array(W * H);
-  const idx = (x, y) => y * W + x;
-  const arrows = []; // reverse escape order
-  const rayMap = new Map(); // empty cell idx → count of preceding facing rays
-  const lastRayCells = []; // cells on the most-recently-placed arrow's ray
-  let filled = 0;
-  const targetCells = Math.floor(W * H * opts.targetFill);
-  const { chainTarget } = opts;
+  // Phase 1
+  const { paths, grid, filled } = partition(W, H, rand, opts);
+  if (paths.length < 2) return null;
+  // Phase 2+3: jointly assign facings and escape order via Kahn topo.
+  const { arrows, escapeOrder } = assignFacings(paths, W, H, grid, rand, opts);
+  // If some paths couldn't be pickable, they're stuck on the grid as
+  // ghost obstacles — would break verify. Reject and let the caller retry.
+  if (escapeOrder.length < paths.length) {
+    if (opts.debug) {
+      const stuck = paths.length - escapeOrder.length;
+      console.error(`  [debug] Kahn stuck: ${stuck}/${paths.length} unpicked`);
+    }
+    return null;
+  }
+  if (escapeOrder.length < 2) return null;
+  // Phase 4: convert and extend tails
+  const ordered = arrowsToRawForm(arrows, escapeOrder);
+  // For extendTails we need a {0,1} grid (path cells = 1), not {0, pathId}.
+  const flatGrid = new Uint8Array(W * H);
+  for (let i = 0; i < grid.length; i++) flatGrid[i] = grid[i] === 0 ? 0 : 1;
+  const tailAdded = extendTails(W, H, flatGrid, ordered, rand);
+
+  // Chain achieved: longest dependency chain in the blocker DAG.
   let chainAchieved = 0;
-
-  // ---- Phase 1: chain skeleton ------------------------------------------
-  //
-  // Place A_K first (free anchor). For k = 1..chainTarget−1 require the
-  // new arrow's head to sit on the previous arrow's facing ray cells that
-  // are still empty in the grid. As soon as the constraint can't be
-  // satisfied (geometry exhausted), break out and let phase 2 fill the
-  // rest of the grid.
-  for (let k = 0; k < chainTarget; k++) {
-    let arrow;
-    if (k === 0) {
-      // First arrow: prefer anchors with rayLen ≥ 1 so phase 2 has somewhere
-      // to anchor blockers. Shuffle so different seeds explore different
-      // starting positions.
-      const all = collectAnchors(W, H, grid);
-      if (all.length === 0) break;
-      const withRay = all.filter((a) => a.rayLen >= 1);
-      const pool = withRay.length > 0 ? withRay : all;
-      shuffleInPlace(pool, rand);
-      arrow = buildArrowFromAnchor(pool, W, H, grid, rand, opts, rayMap);
-    } else {
-      // Constrained: head cell must be on the previous arrow's ray AND
-      // currently empty. Also reject anchors whose `facing` is parallel and
-      // opposite to the previous arrow's facing — that would mean the new
-      // arrow shoots back along the same line, immediately reblocking the
-      // previous arrow (would create a 2-cycle in the blocker DAG: A_{k-1}
-      // blocks A_k via its body, A_k blocks A_{k-1} via its body on the ray).
-      const all = collectAnchors(W, H, grid);
-      if (all.length === 0) break;
-      const allowed = new Set(lastRayCells.map(([x, y]) => idx(x, y)));
-      const prevArrow = arrows[arrows.length - 1];
-      const [pfx, pfy] = prevArrow.facing;
-      const constrained = all.filter((a) => {
-        if (!allowed.has(idx(a.start[0], a.start[1]))) return false;
-        // Disallow facing exactly opposite of prev: that's the same line
-        // and would create a mutual-block cycle.
-        return !(a.facing[0] === -pfx && a.facing[1] === -pfy);
-      });
-      if (constrained.length === 0) break;
-      shuffleInPlace(constrained, rand);
-      arrow = buildArrowFromAnchor(constrained, W, H, grid, rand, opts, rayMap);
+  const depthCache = new Array(arrows.length).fill(0);
+  function chainAt(i, stack) {
+    if (depthCache[i] > 0) return depthCache[i];
+    if (stack.has(i)) return arrows.length;
+    stack.add(i);
+    let maxDep = 0;
+    for (const b of arrows[i].allBlockers) {
+      maxDep = Math.max(maxDep, chainAt(b, stack));
     }
-    if (!arrow) break;
-    for (const [x, y] of arrow.path) {
-      grid[idx(x, y)] = 1;
-      rayMap.delete(idx(x, y));
-      filled++;
-    }
-    lastRayCells.length = 0;
-    recordRay(arrow, W, H, grid, rayMap, lastRayCells);
-    arrows.push(arrow);
-    chainAchieved++;
+    stack.delete(i);
+    const d = 1 + maxDep;
+    depthCache[i] = d;
+    return d;
+  }
+  for (let i = 0; i < arrows.length; i++) {
+    chainAchieved = Math.max(chainAchieved, chainAt(i, new Set()));
   }
 
-  // ---- Phase 2: random fill (same as generate-reverse) -------------------
-  for (let k = 0; k < opts.maxArrows; k++) {
-    if (filled >= targetCells) break;
-    let arrow = placeOne(W, H, grid, rand, opts, rayMap);
-    if (!arrow && opts.minLen > 2) {
-      arrow = placeOne(W, H, grid, rand, { ...opts, minLen: 2 }, rayMap);
-    }
-    if (!arrow) break;
-    for (const [x, y] of arrow.path) {
-      grid[idx(x, y)] = 1;
-      rayMap.delete(idx(x, y));
-      filled++;
-    }
-    recordRay(arrow, W, H, grid, rayMap);
-    arrows.push(arrow);
-  }
-
-  arrows.reverse();
-  const tailAdded = extendTails(W, H, grid, arrows, rand);
-  filled += tailAdded;
-
-  return { arrows, fillRate: filled / (W * H), tailAdded, chainAchieved };
+  return {
+    arrows: ordered,
+    fillRate: (filled + tailAdded) / (W * H),
+    tailAdded,
+    chainAchieved,
+  };
 }
 
 function buildRawLevel(W, H, arrows) {
@@ -549,7 +568,7 @@ const W = Number(args.w ?? 10);
 const H = Number(args.h ?? 10);
 const baseSeed = Number(args.seed ?? 1);
 const count = Number(args.count ?? 5);
-const targetFill = Number(args["target-fill"] ?? 0.85);
+const targetFill = Number(args["target-fill"] ?? 0.95);
 const minLen = Number(args["min-arrow-len"] ?? 3);
 const maxLen = Number(args["max-arrow-len"] ?? 12);
 const maxArrows = Number(args["max-arrows"] ?? 300);
@@ -557,25 +576,31 @@ const maxAttempts = Number(args["max-attempts"] ?? 40);
 const minSequencing = Number(args["min-sequencing"] ?? 0.5);
 const minChainDepth = Number(args["min-chain-depth"] ?? 0);
 const minBottleneck = Number(args["min-bottleneck"] ?? 0);
-const rayBias = Number(args["ray-bias"] ?? 0.95);
 const straightBias = Number(args["straight-bias"] ?? 0.65);
+const initEscRate = Number(args["init-esc-rate"] ?? 0.1);
 const maxDeadlockRate = Number(args["max-deadlock-rate"] ?? 0.05);
 const rolloutTrials = Number(args["rollout-trials"] ?? 100);
-const chainTargetRaw = args["chain-target"];
-const chainTarget =
-  chainTargetRaw != null ? Number(chainTargetRaw) : Math.max(6, Math.min(20, Math.min(W, H)));
-const chainMin =
-  args["chain-min"] != null ? Number(args["chain-min"]) : Math.max(0, chainTarget - 2);
+const kahnRetries = Number(args["kahn-retries"] ?? 20);
+const debug = args.debug === "true";
 const outDir =
   args.out === undefined ? null : args.out === "true" ? DEFAULT_OUT : resolve(args.out);
 
-const opts = { minLen, maxLen, targetFill, straightBias, rayBias, maxArrows, chainTarget };
+const opts = {
+  minLen,
+  maxLen,
+  targetFill,
+  straightBias,
+  initEscRate,
+  maxArrows,
+  kahnRetries,
+  debug,
+};
 
 if (outDir) mkdirSync(outDir, { recursive: true });
 
 console.error(
-  `[partition] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, ` +
-    `chainTarget=${chainTarget}, chainMin=${chainMin}, targetFill=${targetFill}` +
+  `[partition v1] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, ` +
+    `targetFill=${targetFill}, maxLen=${maxLen}, initEscRate=${initEscRate}` +
     (outDir ? `, out=${outDir}` : ""),
 );
 
@@ -583,8 +608,8 @@ let produced = 0;
 let attempts = 0;
 const rejects = {
   "too few arrows": 0,
+  "Kahn stuck (SCC in blocker DAG)": 0,
   "verify failed (BUG)": 0,
-  "chain short of --chain-min": 0,
   "too trivial (low sequencing)": 0,
   "shallow forced-chain (--min-chain-depth)": 0,
   "too few keystones (--min-bottleneck)": 0,
@@ -594,13 +619,14 @@ const rejects = {
 while (produced < count && attempts < maxAttempts * count) {
   attempts++;
   const rand = mulberry32(baseSeed + attempts * 1009);
-  const { arrows, fillRate, chainAchieved } = generate(W, H, rand, opts);
-  if (arrows.length < 2) {
-    rejects["too few arrows"]++;
+  const result = generate(W, H, rand, opts);
+  if (!result) {
+    rejects["Kahn stuck (SCC in blocker DAG)"]++;
     continue;
   }
-  if (chainAchieved < chainMin) {
-    rejects["chain short of --chain-min"]++;
+  const { arrows, fillRate, chainAchieved } = result;
+  if (arrows.length < 2) {
+    rejects["too few arrows"]++;
     continue;
   }
   const raw = buildRawLevel(W, H, arrows);
@@ -633,7 +659,7 @@ while (produced < count && attempts < maxAttempts * count) {
   }
   produced++;
   const label = `gen_part_w${W}h${H}_s${baseSeed}_n${String(produced).padStart(3, "0")}`;
-  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length} chainDepth=${chainDepth} bottleneck=${bottleneck}/${raw.arrows.length} chainBuilt=${chainAchieved}/${chainTarget} deadlockRate=${(dlRate * 100).toFixed(1)}%`;
+  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length} chainDepth=${chainDepth} bottleneck=${bottleneck}/${raw.arrows.length} chainAchieved=${chainAchieved} deadlockRate=${(dlRate * 100).toFixed(1)}%`;
   if (outDir) {
     const fpath = resolve(outDir, `${label}.json`);
     writeFileSync(fpath, JSON.stringify(raw));
@@ -649,8 +675,11 @@ console.error(
 
 if (produced < count) {
   console.error(
-    `hint: lower --chain-target (current ${chainTarget}) or --chain-min (${chainMin}); ` +
-      `bump --max-attempts; or pick a different seed`,
+    "hint: lower --target-fill (current " +
+      targetFill +
+      "), raise --kahn-retries (current " +
+      kahnRetries +
+      "), or pick a different seed",
   );
   process.exit(produced === 0 ? 1 : 0);
 }
