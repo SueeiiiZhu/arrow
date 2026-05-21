@@ -18,6 +18,14 @@
 //   greedy moves/arrows  ratio of greedy escape-first moves to arrow
 //                        count. > 1 means at least one re-pull happened
 //                        during the solve.
+//   greedy re-pulls      absolute extra-pull count (moves - arrows). Direct
+//                        target for the --min-sequencing reject filter.
+//   single-shot %        fraction of levels where greedy solves in exactly
+//                        `arrows` moves (re-pulls == 0). High = trivial
+//                        batch; corpus value is the meaningful baseline.
+//   forced-chain depth   longest chain of "j blocks i at t=0" relationships
+//                        among the initial blocker graph. Larger = the
+//                        player must clear a specific keystone sequence.
 //   path len p50, p90    snake-length distribution shape.
 //
 // For each metric we print the same summary stats (mean, p25, median,
@@ -325,6 +333,7 @@ function computeMetrics(raw) {
   // blockedBy[i] = list of arrows that the i-th arrow blocks (i.e. those
   // arrows' facing rays hit one of i's body cells first).
   const blocksCount = new Array(n).fill(0);
+  const blockedBy = new Array(n).fill(-1);
   let initEsc = 0;
   for (let i = 0; i < n; i++) {
     const a = raw.arrows[i];
@@ -343,11 +352,32 @@ function computeMetrics(raw) {
       cy += fy;
     }
     if (blocker === null) initEsc++;
-    else blocksCount[blocker]++;
+    else {
+      blocksCount[blocker]++;
+      blockedBy[i] = blocker;
+    }
   }
   // "Bottleneck" arrow = blocks ≥ 2 others initially.
   let bottleneck = 0;
   for (const c of blocksCount) if (c >= 2) bottleneck++;
+
+  // Forced-chain depth: longest path in the initial blocker DAG. Each arrow's
+  // depth is 1 + depth(its unique blocker); init-escapable arrows have depth 1.
+  // Cycles in the static blocker graph (would imply nobody can move first) are
+  // capped at the arrow count, but in practice generated levels are acyclic.
+  const chainDepth = new Array(n).fill(0);
+  const visit = (i, stack) => {
+    if (chainDepth[i] > 0) return chainDepth[i];
+    if (stack.has(i)) return n; // cycle: cap
+    stack.add(i);
+    const b = blockedBy[i];
+    const d = b < 0 ? 1 : 1 + visit(b, stack);
+    stack.delete(i);
+    chainDepth[i] = d;
+    return d;
+  };
+  let maxChain = 0;
+  for (let i = 0; i < n; i++) maxChain = Math.max(maxChain, visit(i, new Set()));
 
   // Greedy moves count.
   const data = loadLevel(raw);
@@ -365,6 +395,9 @@ function computeMetrics(raw) {
     initEscFrac: initEsc / n,
     bottleneckFrac: bottleneck / n,
     moveRatio: won ? moves.length / n : null,
+    greedyGap: won ? moves.length - n : null,
+    singleShot: won ? (moves.length === n ? 1 : 0) : null,
+    chainDepth: maxChain,
     pathLenP50: lens[Math.floor(lens.length / 2)],
     pathLenP90: lens[Math.floor(lens.length * 0.9)],
   };
@@ -410,6 +443,9 @@ const METRICS = [
   { key: "initEscFrac", label: "init-escapable %", kind: "pct" },
   { key: "bottleneckFrac", label: "bottleneck %", kind: "pct" },
   { key: "moveRatio", label: "greedy moves/arrow", kind: "ratio" },
+  { key: "greedyGap", label: "greedy re-pulls", kind: "int" },
+  { key: "singleShot", label: "single-shot %", kind: "pct" },
+  { key: "chainDepth", label: "forced-chain depth", kind: "int" },
   { key: "pathLenP50", label: "path len p50", kind: "int" },
   { key: "pathLenP90", label: "path len p90", kind: "int" },
 ];
@@ -540,6 +576,15 @@ if (corpusStats) {
   );
   console.log("     'bottleneck %' low vs corpus      → few keystone arrows (less structure).");
   console.log(
-    "     'greedy moves/arrow' ~1.0       → greedy solves trivially, no re-pulls needed.",
+    "     'forced-chain depth' low vs corpus → static blocker DAG is shallow; few mandatory orderings.",
+  );
+  console.log(
+    "  note: 'greedy moves/arrow' and 'single-shot %' are usually 100% / 0 re-pulls on both corpus",
+  );
+  console.log(
+    "        and synthetic batches — the snake-walk escape-first greedy almost never needs to re-pull,",
+  );
+  console.log(
+    "        so these two columns mostly serve as a regression canary (any non-zero spike = a bug).",
   );
 }

@@ -446,33 +446,62 @@ function verify(raw) {
 // having moved? Counted geometrically — same predicate we used during
 // placement. A level where every arrow can escape independently is a
 // puzzle in name only; we want most arrows initially blocked.
-function countInitialEscapable(raw) {
+// Initial-blocker stats. Walks each arrow's facing ray and records the first
+// arrow that blocks it (if any). From the blocker mapping we derive:
+//   initEsc        — count of arrows with no blocker (can pull straight away)
+//   bottleneck     — count of arrows that block ≥ 2 other arrows (keystones)
+//   chainDepth     — longest chain in the blocker DAG; depth 1 means init-
+//                    escapable, depth k means k-1 arrows must clear first.
+//                    Mirrors the same metric in quality-eval.mjs.
+function computeBlockerStats(raw) {
   const W = raw.width;
   const H = raw.height;
+  const n = raw.arrows.length;
   const grid = new Map();
-  for (let i = 0; i < raw.arrows.length; i++) {
+  for (let i = 0; i < n; i++) {
     for (const [x, y] of raw.arrows[i].path) grid.set(`${x},${y}`, i);
   }
-  let count = 0;
-  for (let i = 0; i < raw.arrows.length; i++) {
+  const blocksCount = new Array(n).fill(0);
+  const blockedBy = new Array(n).fill(-1);
+  let initEsc = 0;
+  for (let i = 0; i < n; i++) {
     const a = raw.arrows[i];
     const [sx, sy] = a.start;
     const [fx, fy] = a.facing;
     let cx = sx + fx;
     let cy = sy + fy;
-    let blocked = false;
+    let blocker = -1;
     while (cx >= 0 && cx < W && cy >= 0 && cy < H) {
       const owner = grid.get(`${cx},${cy}`);
       if (owner !== undefined && owner !== i) {
-        blocked = true;
+        blocker = owner;
         break;
       }
       cx += fx;
       cy += fy;
     }
-    if (!blocked) count++;
+    if (blocker < 0) initEsc++;
+    else {
+      blocksCount[blocker]++;
+      blockedBy[i] = blocker;
+    }
   }
-  return count;
+  let bottleneck = 0;
+  for (const c of blocksCount) if (c >= 2) bottleneck++;
+  const depth = new Array(n).fill(0);
+  const visit = (i, stack) => {
+    if (depth[i] > 0) return depth[i];
+    if (stack.has(i)) return n;
+    stack.add(i);
+    const b = blockedBy[i];
+    const d = b < 0 ? 1 : 1 + visit(b, stack);
+    stack.delete(i);
+    depth[i] = d;
+    return d;
+  };
+  let chainDepth = 0;
+  for (let i = 0; i < n; i++) chainDepth = Math.max(chainDepth, visit(i, new Set()));
+  return { initEsc, bottleneck, chainDepth };
 }
 
 // Realistic-rollout deadlock probe. The construction guarantees a solution
@@ -541,6 +570,8 @@ const maxLen = Number(args["max-arrow-len"] ?? 12);
 const maxArrows = Number(args["max-arrows"] ?? 300);
 const maxAttempts = Number(args["max-attempts"] ?? 20);
 const minSequencing = Number(args["min-sequencing"] ?? 0.5);
+const minChainDepth = Number(args["min-chain-depth"] ?? 0);
+const minBottleneck = Number(args["min-bottleneck"] ?? 0);
 const rayBias = Number(args["ray-bias"] ?? 0.95);
 const straightBias = Number(args["straight-bias"] ?? 0.65);
 const maxDeadlockRate = Number(args["max-deadlock-rate"] ?? 0.05);
@@ -563,6 +594,8 @@ const rejects = {
   "too few arrows": 0,
   "verify failed (BUG)": 0,
   "too trivial (low sequencing)": 0,
+  "shallow forced-chain (--min-chain-depth)": 0,
+  "too few keystones (--min-bottleneck)": 0,
   "player-hostile (high deadlock rate)": 0,
 };
 
@@ -581,10 +614,19 @@ while (produced < count && attempts < maxAttempts * count) {
     console.error(`  WARN verify failed (means construction has a model bug): ${v.reason}`);
     continue;
   }
-  const initEsc = countInitialEscapable(raw);
+  const { initEsc, bottleneck, chainDepth } = computeBlockerStats(raw);
   const escFrac = initEsc / arrows.length;
   if (escFrac > minSequencing) {
     rejects["too trivial (low sequencing)"]++;
+    continue;
+  }
+  if (chainDepth < minChainDepth) {
+    rejects["shallow forced-chain (--min-chain-depth)"]++;
+    continue;
+  }
+  const bottleneckFrac = bottleneck / arrows.length;
+  if (bottleneckFrac < minBottleneck) {
+    rejects["too few keystones (--min-bottleneck)"]++;
     continue;
   }
   // Deterministic per-candidate seed so the deadlock probe is reproducible.
@@ -596,7 +638,7 @@ while (produced < count && attempts < maxAttempts * count) {
   }
   produced++;
   const label = `gen_rev_w${W}h${H}_s${baseSeed}_n${String(produced).padStart(3, "0")}`;
-  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length} deadlockRate=${(dlRate * 100).toFixed(1)}%`;
+  const meta = `arrows=${raw.arrows.length} fill=${(fillRate * 100).toFixed(0)}% initEsc=${initEsc}/${raw.arrows.length} chainDepth=${chainDepth} bottleneck=${bottleneck}/${raw.arrows.length} deadlockRate=${(dlRate * 100).toFixed(1)}%`;
   if (outDir) {
     const fpath = resolve(outDir, `${label}.json`);
     writeFileSync(fpath, JSON.stringify(raw));
@@ -612,7 +654,7 @@ console.error(
 
 if (produced < count) {
   console.error(
-    `hint: relax --min-sequencing (current ${minSequencing}), bump --max-attempts, or pick a different seed`,
+    `hint: relax --min-sequencing (current ${minSequencing}), --min-chain-depth (${minChainDepth}), --min-bottleneck (${minBottleneck}); bump --max-attempts; or pick a different seed`,
   );
   process.exit(produced === 0 ? 1 : 0);
 }
