@@ -1,5 +1,7 @@
 import {
+  type CompactLevel,
   createGame,
+  decodeCompact,
   findArrowAt,
   type GameState,
   loadLevel,
@@ -21,10 +23,8 @@ import {
   pickCell,
   type Synth,
 } from "@ea/renderer";
-import { decodeCompact } from "./decode.js";
 import {
   ALL_KEYS,
-  type CompactLevel,
   KEY_TO_LOC,
   MAIN_LEVELS,
   type MainLevel,

@@ -43,10 +43,14 @@ jobs:
         run: pnpm test
 
       # Build the WeChat bundle: exercises build-levels.mjs (compact encoder)
-      # and bundle.mjs (esbuild + subpackage emission). Skips H5 prod build
-      # — known OOM on `import.meta.glob` over 3548 JSON, see HANDOFF.md.
+      # and bundle.mjs (esbuild + subpackage emission).
       - name: Build wxgame (main + 12 subpackages)
         run: pnpm build:wxgame
+
+      # Build the H5 bundle: exercises the web build-levels.mjs (same
+      # compact encoder, JSON packs into public/packs/) + vite build.
+      - name: Build web (H5)
+        run: pnpm build:web
 
       # Smoke-test the solver on a 200-level sample. Greedy escape-first
       # solves the full corpus in our local runs; if a regression makes

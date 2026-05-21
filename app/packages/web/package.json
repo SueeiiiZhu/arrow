@@ -3,10 +3,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "gen": "node scripts/build-levels.mjs",
+    "predev": "pnpm gen",
+    "prebuild": "pnpm gen",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "pnpm gen && tsc --noEmit"
   },
   "dependencies": {
     "@ea/core": "workspace:*",

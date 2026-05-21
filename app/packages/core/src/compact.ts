@@ -1,16 +1,22 @@
-// Decode the compact wxgame level format back to the @ea/core RawLevelFile
-// shape. Kept inside `wxgame/` because the compact form is wxgame-internal;
-// nothing in core needs to know about it.
+// Compact wire format used by the wxgame subpackages and the H5 lazy-pack
+// loader. The encoder lives in tooling (`packages/wxgame/scripts/_encode.mjs`)
+// because it runs only at build time; the decoder ships in core so any
+// host can hydrate a compact tuple back into a RawLevelFile.
+//
+//   level   := [W, H, arrows[]]
+//   arrow   := [fdir, ...cellIdx]
+//   fdir    := 0 (+x), 1 (+y), 2 (-x), 3 (-y)
+//   cellIdx := y*W + x
 
-import type { RawLevelFile } from "@ea/core";
+import type { RawLevelFile } from "./types.js";
 
 export type CompactLevel = [number, number, number[][]];
 
 const DIRS: Array<[number, number]> = [
-  [1, 0], // 0: +x
-  [0, 1], // 1: +y
-  [-1, 0], // 2: -x
-  [0, -1], // 3: -y
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
 ];
 
 export function decodeCompact(c: CompactLevel): RawLevelFile {
