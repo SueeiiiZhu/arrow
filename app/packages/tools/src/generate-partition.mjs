@@ -88,7 +88,7 @@ function growPath(W, H, grid, rand, opts) {
   const idx = (x, y) => y * W + x;
   const inGrid = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
   const isEmpty = (x, y) => grid[idx(x, y)] === 0;
-  const { minLen, maxLen, straightBias } = opts;
+  const { minLen, maxLen, straightBias, longTailFrac, longTailMax } = opts;
 
   const seeds = [];
   for (let y = 0; y < H; y++) {
@@ -102,9 +102,19 @@ function growPath(W, H, grid, rand, opts) {
   for (const seed of seeds) {
     const path = [seed];
     const used = new Set([idx(seed[0], seed[1])]);
-    const targetLen = minLen + Math.floor(rand() * (maxLen - minLen + 1));
+    // Length-distribution mixture: with probability longTailFrac, target a
+    // length in [maxLen, longTailMax] — this gives the path-len distribution
+    // a heavy tail closer to corpus (corpus p90=27 vs our p90=16 when every
+    // path is capped at maxLen=18). Most paths still target [minLen, maxLen]
+    // so structural metrics (chainDepth, bottleneck) stay stable. The walk's
+    // hard cap is also lifted to longTailMax for long-tail paths only.
+    const isLongTail = longTailFrac > 0 && longTailMax > maxLen && rand() < longTailFrac;
+    const targetLen = isLongTail
+      ? maxLen + Math.floor(rand() * (longTailMax - maxLen + 1))
+      : minLen + Math.floor(rand() * (maxLen - minLen + 1));
+    const walkCap = isLongTail ? longTailMax : maxLen;
     let lastDir = null;
-    while (path.length < maxLen) {
+    while (path.length < walkCap) {
       const [hx, hy] = path[path.length - 1];
       const free = DIRS.filter(([dx, dy]) => {
         const nx = hx + dx;
@@ -657,6 +667,8 @@ const count = Number(args.count ?? 5);
 const targetFill = Number(args["target-fill"] ?? 0.95);
 const minLen = Number(args["min-arrow-len"] ?? 3);
 const maxLen = Number(args["max-arrow-len"] ?? 18);
+const longTailFrac = Number(args["long-tail-frac"] ?? 0.15);
+const longTailMax = Number(args["long-tail-max"] ?? 40);
 const maxArrows = Number(args["max-arrows"] ?? 300);
 const maxAttempts = Number(args["max-attempts"] ?? 40);
 const minSequencing = Number(args["min-sequencing"] ?? 0.5);
@@ -676,6 +688,8 @@ const outDir =
 const opts = {
   minLen,
   maxLen,
+  longTailFrac,
+  longTailMax,
   targetFill,
   straightBias,
   initEscRate,
@@ -690,8 +704,8 @@ if (outDir) mkdirSync(outDir, { recursive: true });
 
 console.error(
   `[partition v2] generating up to ${count} level(s) on ${W}×${H}, seed=${baseSeed}, ` +
-    `targetFill=${targetFill}, maxLen=${maxLen}, initEscRate=${initEscRate}, ` +
-    `maxBacktracks=${maxBacktracks}` +
+    `targetFill=${targetFill}, maxLen=${maxLen}, longTailFrac=${longTailFrac}, ` +
+    `longTailMax=${longTailMax}, initEscRate=${initEscRate}, maxBacktracks=${maxBacktracks}` +
     (outDir ? `, out=${outDir}` : ""),
 );
 

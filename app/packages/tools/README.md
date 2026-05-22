@@ -211,20 +211,20 @@ Partition-first only commits to facings AFTER the geometry is pinned, so paths m
 | forced-chain depth (med) | **8** | ~7 | 6 |
 | yield | 5/5 in 11 attempts | 10/10 in 16 attempts | — |
 
-**25×31, count=5 × seeds 2/3/4 (n=15) vs n=7 corpus levels** (re-measured 2026-05-22 after canPick blocker-max preference + Phase 1 isolated-path reject):
+**25×31, count=5 × seeds 2/3/4 (n=15) vs n=7 corpus levels** (re-measured 2026-05-22 after canPick blocker-max preference + Phase 1 isolated-path reject + path-length long-tail mixture):
 
 | metric | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 79 | ~64 | 67 |
+| arrows (med) | 74 | ~64 | 67 |
 | fill % (med) | **94 %** | 85 % | 97 % |
-| init-escapable % (med) | 15 % | 30 % | 9 % |
-| bottleneck % (med) | **20 %** | 11 % | 26 % |
+| init-escapable % (med) | 13 % | 30 % | 9 % |
+| bottleneck % (med) | **21 %** | 11 % | 26 % |
 | forced-chain depth (med) | **9** | 7 | 10 |
 | path len p50 (med) | **8** | — | 8 |
-| path len p90 (med) | 16 | — | 27 |
-| yield (target-fill=0.85) | 5/5 in ~15 attempts | — | — |
+| path len p90 (med) | 18 | — | 27 |
+| yield (target-fill=0.85) | 5/5 in ~10 attempts | — | — |
 
-Partition v2 closes the 25×31 gap that v1 couldn't reach: chain-depth within 1 of corpus (9 vs 10), bottleneck within 6pp (20 % vs 26 %), arrow count and path-len p50 also match. The remaining gaps: init-escapable still 6pp above corpus, and path-len p90 still much shorter than corpus (16 vs 27). Both are path-length-rooted — partition primitive caps individual paths at `--max-arrow-len`, so heads sit closer to the grid edge and frequently face off-grid (clear ray = init-escapable). Phase 1 now rejects *isolated* paths (both facing rays escape without crossing any other path) after a 5-path grace period, and Phase 2 `canPick` prefers the facing with more blockers — together these cut init-escapable from ~18 % to ~15 %. Closing the rest requires longer paths, but pushing `--max-arrow-len` past 18 regresses chainDepth (at 24 → 8).
+Partition v2 closes the 25×31 gap that v1 couldn't reach: chain-depth within 1 of corpus (9 vs 10), bottleneck within 5pp (21 % vs 26 %), arrow count within 7 of corpus median, path-len p50 matches exactly. Remaining gaps: init-escapable 4pp above corpus, path-len p90 still ~9 cells shorter (18 vs 27). Three independent mechanisms drove improvements over baseline (init-esc μ 19 % → 14 %, p90 16 → 18): (1) Phase 1 rejects *isolated* paths (both facing rays clear) after a 5-path grace period; (2) Phase 2 `canPick` prefers the facing with more blockers; (3) a fraction (`--long-tail-frac=0.15`) of paths target lengths in `[maxLen, --long-tail-max=40]` so a few long snake-arrows survive. Pushing long-tail-frac higher (tested 0.30) regresses chainDepth without buying much p90, so 0.15 is the empirical sweet spot. Closing the rest of the p90 gap requires distribution shifts that conflict with chainDepth structure.
 
 ### Known limitation: 31×38 and larger
 
@@ -262,7 +262,9 @@ Inherits sequencing / chain / bottleneck / deadlock gates from `generate:reverse
 | --- | --- | --- |
 | `--target-fill` | 0.95 | Fraction of cells covered by partition paths. Phase 1 stops when reached; tail extension may push higher. |
 | `--min-arrow-len` | 3 | Minimum path length grown by Phase 1. |
-| `--max-arrow-len` | 18 | Maximum path length grown by Phase 1. Shorter = more paths = denser blocking. **Bumped 2026-05-22** from 12 to 18 — at 25×31 it pulls arrows count 98 → 78 (corpus 67), `path-len p90` 12 → 17 (corpus 27), bottleneck 19 % → 22 % (corpus 26 %), chainDepth 9 → 10 (corpus 10). Going higher (24) further closes p90 but regresses chainDepth, so 18 is the sweet spot. Small grids (10×10) are unaffected because self-avoidance caps long paths anyway. |
+| `--max-arrow-len` | 18 | Maximum path length grown by Phase 1 for **normal** (non-long-tail) paths. Shorter = more paths = denser blocking. **Bumped 2026-05-22** from 12 to 18 — at 25×31 it pulls arrows count 98 → 78 (corpus 67), `path-len p90` 12 → 17 (corpus 27), bottleneck 19 % → 22 % (corpus 26 %), chainDepth 9 → 10 (corpus 10). Going higher (24) further closes p90 but regresses chainDepth, so 18 is the sweet spot for the bulk distribution. Long-tail paths (see below) can exceed this cap. |
+| `--long-tail-frac` | 0.15 | Fraction of paths that target a length in `[max-arrow-len, long-tail-max]` instead of the normal `[min-arrow-len, max-arrow-len]` range. **Added 2026-05-22**. Closes some of the path-len p90 gap (16 → 18 at 25×31) and trims init-escapable a touch (μ 16 % → 14 %). Pushing it to 0.30 regresses chainDepth (10 → 8) without buying much more p90, so 0.15 is the empirical sweet spot. Set to 0 to disable the mixture. |
+| `--long-tail-max` | 40 | Hard cap on long-tail-path length. 40 matches corpus's occasional 40+ snake-arrows. |
 | `--init-esc-rate` | 0.1 | When Kahn has both "blocked" (ray-blocked) and "open" (no blockers) candidates available, probability of picking an open one. Lower = tighter sequencing. |
 | `--kahn-retries` | 20 | Phase-2 retry budget when Kahn deadlocks on a fixed geometry. Higher helps borderline cases; v2 backtracking handles the rest. |
 | `--max-backtracks` | 20 | v2 SCC-core backtrack budget per candidate. Raise to 50–80 on 25×31+ to keep yield up at high `--target-fill`. |

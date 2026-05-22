@@ -211,20 +211,20 @@ Partition-first 在几何钉死之后**才**承诺 facing，所以 path 之间�
 | 强制链深 (med) | **8** | ~7 | 6 |
 | yield | 5/5 在 11 次尝试内 | 10/10 在 16 次尝试内 | — |
 
-**25×31，count=5 × seed 2/3/4 (n=15)** vs n=7 corpus 关卡（2026-05-22 加入 canPick blocker-max 偏好 + Phase 1 isolated-path 拒绝后重测）：
+**25×31，count=5 × seed 2/3/4 (n=15)** vs n=7 corpus 关卡（2026-05-22 加入 canPick blocker-max 偏好 + Phase 1 isolated-path 拒绝 + path 长度长尾混合后重测）：
 
 | 指标 | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 79 | ~64 | 67 |
+| arrows (med) | 74 | ~64 | 67 |
 | fill % (med) | **94 %** | 85 % | 97 % |
-| init-escapable % (med) | 15 % | 30 % | 9 % |
-| bottleneck % (med) | **20 %** | 11 % | 26 % |
+| init-escapable % (med) | 13 % | 30 % | 9 % |
+| bottleneck % (med) | **21 %** | 11 % | 26 % |
 | 强制链深 (med) | **9** | 7 | 10 |
 | path len p50 (med) | **8** | — | 8 |
-| path len p90 (med) | 16 | — | 27 |
-| yield (target-fill=0.85) | 5/5 在 ~15 次尝试内 | — | — |
+| path len p90 (med) | 18 | — | 27 |
+| yield (target-fill=0.85) | 5/5 在 ~10 次尝试内 | — | — |
 
-partition v2 把 v1 摸不到的 25×31 缺口堵上了：强制链深差 1 之内（9 vs 10），bottleneck 差 6pp 之内（20 % vs 26 %），arrow 数和 path-len p50 也都对齐。还剩两个 gap：init-escapable 比 corpus 高 6pp，path-len p90 短了不少（16 vs 27）。两者**同根**——partition 原语把单条 path 上限卡在 `--max-arrow-len`，head 离边沿近，常常朝外出界（射线空 = init-escapable）。Phase 1 现在会拒绝「两端 facing 都不挡任何 path 的 isolated path」（前 5 条 path 宽限期），Phase 2 的 `canPick` 也优先选 blocker 更多的 facing —— 合起来把 init-escapable 从 ~18 % 降到 ~15 %。再往下就得让 path 变长，但 `--max-arrow-len` 调到 18 以上强制链深会退（24 时跌到 8）。
+partition v2 把 v1 摸不到的 25×31 缺口堵上了：强制链深差 1 之内（9 vs 10），bottleneck 差 5pp 之内（21 % vs 26 %），arrow 数差 corpus 中位 7 个，path-len p50 完全对齐。剩下 gap：init-escapable 比 corpus 高 4pp，path-len p90 短约 9 个格（18 vs 27）。相比 baseline（init-esc μ 19 % → 14 %，p90 16 → 18）有三个相互独立的改进：(1) Phase 1 拒绝「两端 facing rays 都不挡任何 path」的 isolated path（前 5 条 path 宽限期）；(2) Phase 2 `canPick` 优先选 blocker 更多的 facing；(3) 一定比例（`--long-tail-frac=0.15`）的 path 把目标长度采样在 `[maxLen, --long-tail-max=40]`，让少量长蛇形箭头存活。把 long-tail-frac 调到 0.30 反而让 chainDepth 退化（10 → 8）且 p90 增益边际，所以 0.15 是经验 sweet spot。p90 残缺再往下就得做与 chainDepth 冲突的分布偏移。
 
 ### 已知限制：31×38 及更大
 
@@ -262,7 +262,9 @@ pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition
 | --- | --- | --- |
 | `--target-fill` | 0.95 | partition path 覆盖的格子比例。Phase 1 达到就停；tail 延伸还能再涨。 |
 | `--min-arrow-len` | 3 | Phase 1 生长的 path 最短长度。 |
-| `--max-arrow-len` | 18 | Phase 1 生长的 path 最长长度。越短 = path 越多 = 阻塞越密。**2026-05-22 从 12 调到 18** —— 在 25×31 上把 arrows 从 98 拉到 78（corpus 67），`path-len p90` 从 12 拉到 17（corpus 27），bottleneck 从 19 % 升到 22 %（corpus 26 %），chainDepth 从 9 升到 10（对齐 corpus）。再调到 24 会把 p90 收得更窄但 chainDepth 退回 8，所以 18 是甜点。10×10 小网格不受影响（self-avoidance 卡在 maxLen 之前）。 |
+| `--max-arrow-len` | 18 | Phase 1 生长的**正常**（非长尾）path 最长长度。越短 = path 越多 = 阻塞越密。**2026-05-22 从 12 调到 18** —— 在 25×31 上把 arrows 从 98 拉到 78（corpus 67），`path-len p90` 从 12 拉到 17（corpus 27），bottleneck 从 19 % 升到 22 %（corpus 26 %），chainDepth 从 9 升到 10（对齐 corpus）。再调到 24 会把 p90 收得更窄但 chainDepth 退回 8，所以 18 是主分布的甜点。长尾 path（见下）可以超过这个上限。 |
+| `--long-tail-frac` | 0.15 | 把目标长度采样到 `[max-arrow-len, long-tail-max]` 而不是常规 `[min-arrow-len, max-arrow-len]` 范围的 path 比例。**2026-05-22 新增**。把 25×31 的 path-len p90 从 16 拉到 18，init-escapable μ 从 16 % 拉到 14 %。调到 0.30 会让 chainDepth 退（10 → 8）且 p90 增益边际，所以 0.15 是经验甜点。设为 0 关闭混合。 |
+| `--long-tail-max` | 40 | 长尾 path 的硬上限。40 对齐 corpus 偶现的 40+ 格长蛇形箭头。 |
 | `--init-esc-rate` | 0.1 | 当 Kahn 同时有「blocked」（射线被挡）和「open」（无 blocker）候选时，挑 open 的概率。越低 = sequencing 越紧。 |
 | `--kahn-retries` | 20 | 固定几何下 Kahn deadlock 后的重试次数。提高对边界情况有帮助；剩下的让 v2 回溯接管。 |
 | `--max-backtracks` | 20 | 每个 candidate 的 v2 SCC-core 回溯次数。25×31+ 在高 `--target-fill` 下想保 yield 就调到 50–80。 |
