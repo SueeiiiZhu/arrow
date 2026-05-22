@@ -211,18 +211,20 @@ Partition-first 在几何钉死之后**才**承诺 facing，所以 path 之间�
 | 强制链深 (med) | **8** | ~7 | 6 |
 | yield | 5/5 在 11 次尝试内 | 10/10 在 16 次尝试内 | — |
 
-**25×31（corpus 中位），count=5，seed=2** vs n=7 corpus 关卡：
+**25×31（corpus 中位），count=5，seed=2** vs n=7 corpus 关卡（2026-05-22 `--max-arrow-len` 12 → 18 后重测）：
 
 | 指标 | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 98 | ~64 | 67 |
-| fill % (med) | **96 %** | 85 % | 97 % |
-| init-escapable % (med) | **15 %** | 30 % | 9 % |
-| bottleneck % (med) | **19 %** | 11 % | 26 % |
-| 强制链深 (med) | **9** | 7 | 10 |
-| yield (target-fill=0.85) | 5/5 在 34 次尝试内 | — | — |
+| arrows (med) | 78 | ~64 | 67 |
+| fill % (med) | **94 %** | 85 % | 97 % |
+| init-escapable % (med) | 16 % | 30 % | 9 % |
+| bottleneck % (med) | **22 %** | 11 % | 26 % |
+| 强制链深 (med) | **10** | 7 | 10 |
+| path len p50 (med) | **8** | — | 8 |
+| path len p90 (med) | 17 | — | 27 |
+| yield (target-fill=0.85) | 5/5 在 19 次尝试内 | — | — |
 
-partition v2 把 v1 摸不到的 25×31 缺口堵上了：fill 对齐 corpus，chain-depth 对齐 corpus（9 vs 10），bottleneck 差 7pp 之内（19 % vs 26 %），init-escapable 从 reverse-gen 的 30 % 降到 15 %（仍然比 corpus 的 9 % 高 6pp）。它把 corpus 数量更多、长度更短的箭头打包在一起，这是 partition 原语的签名 —— 也是我们 `--min-sequencing` / `--min-chain-depth` 这两道门所认可的方向。
+partition v2 把 v1 摸不到的 25×31 缺口堵上了：强制链深**完全对齐** corpus（10 vs 10），bottleneck 差 4pp 之内（22 % vs 26 %），arrow 数和 path-len p50 也都对齐。还剩两个 gap：init-escapable 比 corpus 高 7pp（无 blocker 的射线起手仍偏松），以及 path-len p90 短了不少（17 vs 27）—— partition 原语本质上把单条 path 上限卡在 `--max-arrow-len`，而 corpus 偶尔会有一两条 40+ 长度的蛇型箭头。要 long-tail 就把 `--max-arrow-len` 调高，但调到 24 时强制链深会退到 8。
 
 ### 已知限制：31×38 及更大
 
@@ -260,7 +262,7 @@ pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition
 | --- | --- | --- |
 | `--target-fill` | 0.95 | partition path 覆盖的格子比例。Phase 1 达到就停；tail 延伸还能再涨。 |
 | `--min-arrow-len` | 3 | Phase 1 生长的 path 最短长度。 |
-| `--max-arrow-len` | 12 | Phase 1 生长的 path 最长长度。越短 = path 越多 = 阻塞越密。 |
+| `--max-arrow-len` | 18 | Phase 1 生长的 path 最长长度。越短 = path 越多 = 阻塞越密。**2026-05-22 从 12 调到 18** —— 在 25×31 上把 arrows 从 98 拉到 78（corpus 67），`path-len p90` 从 12 拉到 17（corpus 27），bottleneck 从 19 % 升到 22 %（corpus 26 %），chainDepth 从 9 升到 10（对齐 corpus）。再调到 24 会把 p90 收得更窄但 chainDepth 退回 8，所以 18 是甜点。10×10 小网格不受影响（self-avoidance 卡在 maxLen 之前）。 |
 | `--init-esc-rate` | 0.1 | 当 Kahn 同时有「blocked」（射线被挡）和「open」（无 blocker）候选时，挑 open 的概率。越低 = sequencing 越紧。 |
 | `--kahn-retries` | 20 | 固定几何下 Kahn deadlock 后的重试次数。提高对边界情况有帮助；剩下的让 v2 回溯接管。 |
 | `--max-backtracks` | 20 | 每个 candidate 的 v2 SCC-core 回溯次数。25×31+ 在高 `--target-fill` 下想保 yield 就调到 50–80。 |

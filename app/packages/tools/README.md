@@ -211,18 +211,20 @@ Partition-first only commits to facings AFTER the geometry is pinned, so paths m
 | forced-chain depth (med) | **8** | ~7 | 6 |
 | yield | 5/5 in 11 attempts | 10/10 in 16 attempts | — |
 
-**25×31 (corpus median), count=5, seed=2** vs n=7 corpus levels:
+**25×31 (corpus median), count=5, seed=2** vs n=7 corpus levels (re-measured 2026-05-22 after `--max-arrow-len` 12 → 18):
 
 | metric | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 98 | ~64 | 67 |
-| fill % (med) | **96 %** | 85 % | 97 % |
-| init-escapable % (med) | **15 %** | 30 % | 9 % |
-| bottleneck % (med) | **19 %** | 11 % | 26 % |
-| forced-chain depth (med) | **9** | 7 | 10 |
-| yield (target-fill=0.85) | 5/5 in 34 attempts | — | — |
+| arrows (med) | 78 | ~64 | 67 |
+| fill % (med) | **94 %** | 85 % | 97 % |
+| init-escapable % (med) | 16 % | 30 % | 9 % |
+| bottleneck % (med) | **22 %** | 11 % | 26 % |
+| forced-chain depth (med) | **10** | 7 | 10 |
+| path len p50 (med) | **8** | — | 8 |
+| path len p90 (med) | 17 | — | 27 |
+| yield (target-fill=0.85) | 5/5 in 19 attempts | — | — |
 
-Partition v2 closes the 25×31 gap that v1 couldn't reach: fill matches corpus, chain-depth matches corpus (9 vs 10), bottleneck within 7pp (19 % vs 26 %), init-escapable down from reverse-gen's 30 % to 15 % (still 6pp above corpus' 9 %). It packs more arrows of shorter length than the corpus, which is the partition primitive's signature — and which our `--min-sequencing` / `--min-chain-depth` gates approve of.
+Partition v2 closes the 25×31 gap that v1 couldn't reach: chain-depth **matches corpus exactly** (10 vs 10), bottleneck within 4pp (22 % vs 26 %), arrow count and path-len p50 also match. The remaining gaps: init-escapable still 7pp above corpus (loosely-anchored ray-clear starts), and path-len p90 still much shorter than corpus (17 vs 27) because partition primitive caps individual paths at `--max-arrow-len` while corpus levels occasionally have one or two snake-like 40+ length arrows. Push `--max-arrow-len` higher only if you specifically want the long-tail; at 24 chainDepth regresses to 8.
 
 ### Known limitation: 31×38 and larger
 
@@ -260,7 +262,7 @@ Inherits sequencing / chain / bottleneck / deadlock gates from `generate:reverse
 | --- | --- | --- |
 | `--target-fill` | 0.95 | Fraction of cells covered by partition paths. Phase 1 stops when reached; tail extension may push higher. |
 | `--min-arrow-len` | 3 | Minimum path length grown by Phase 1. |
-| `--max-arrow-len` | 12 | Maximum path length grown by Phase 1. Shorter = more paths = denser blocking. |
+| `--max-arrow-len` | 18 | Maximum path length grown by Phase 1. Shorter = more paths = denser blocking. **Bumped 2026-05-22** from 12 to 18 — at 25×31 it pulls arrows count 98 → 78 (corpus 67), `path-len p90` 12 → 17 (corpus 27), bottleneck 19 % → 22 % (corpus 26 %), chainDepth 9 → 10 (corpus 10). Going higher (24) further closes p90 but regresses chainDepth, so 18 is the sweet spot. Small grids (10×10) are unaffected because self-avoidance caps long paths anyway. |
 | `--init-esc-rate` | 0.1 | When Kahn has both "blocked" (ray-blocked) and "open" (no blockers) candidates available, probability of picking an open one. Lower = tighter sequencing. |
 | `--kahn-retries` | 20 | Phase-2 retry budget when Kahn deadlocks on a fixed geometry. Higher helps borderline cases; v2 backtracking handles the rest. |
 | `--max-backtracks` | 20 | v2 SCC-core backtrack budget per candidate. Raise to 50–80 on 25×31+ to keep yield up at high `--target-fill`. |
