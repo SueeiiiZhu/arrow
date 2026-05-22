@@ -161,8 +161,7 @@ function growUntilTarget(W, H, grid, paths, filled, targetCells, rand, opts) {
     // (neither facing has a blocker), and the post-construction filter
     // can't fix this — the geometry has to be avoided up front. Grace
     // period: skip the check for the first 5 paths so partition can boot.
-    const isolated =
-      paths.length >= 5 && cands.every((c) => c.allBlockers.length === 0);
+    const isolated = paths.length >= 5 && cands.every((c) => c.allBlockers.length === 0);
     if (cands.length === 0 || isolated) {
       for (const [x, y] of path) grid[idx(x, y)] = 0;
       failuresSinceProgress++;
