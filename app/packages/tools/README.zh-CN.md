@@ -16,7 +16,7 @@
 | `pnpm --filter @ea/tools stat:corpus` | 把 3548 关全语料的分布统计 dump 出来（网格大小、箭头数、蛇长、转角数、密度、facing、tag）。 |
 | `pnpm --filter @ea/tools generate -- [flags]` | **过程化关卡生成器**（path-partition 算法 —— 见下）。 |
 | `pnpm --filter @ea/tools generate:reverse -- [flags]` | **反向构造生成器**（推荐；能扩展到 corpus 中位网格 —— 见下）。 |
-| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first 生成器 v2** —— 真 path-partition + Kahn 联合 facing/escape-order + targeted SCC-core 回溯。在 10×10 到 25×31 上结构指标对齐或超过 corpus 和 reverse-gen。31×38 能跑但单 candidate 分钟级。详见下面「Partition-first 生成器」章节。 |
+| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first 生成器 v2** —— 真 path-partition + Kahn 联合 facing/escape-order + targeted SCC-core 回溯。在 10×10 到 25×31 上结构指标对齐或超过 corpus 和 reverse-gen。31×38 可用（2026-05-22 放宽 `--max-deadlock-rate` 默认值之后），详见下面「Partition-first 生成器」章节。 |
 | `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | 分布对比：reverse-gen 批次 vs 同尺寸语料样本，比较 fill / init-escapable / bottleneck / greedy-moves / path-length。也支持 `--from-dir=<dir>` 加载外部生成器的输出（用这个评估 `generate:partition` 的产物）。详见下面「质量评估」章节。 |
 
 ## 过程化关卡生成器（`generate.mjs`）
@@ -226,7 +226,7 @@ partition v2 把 v1 摸不到的 25×31 缺口堵上了：fill 对齐 corpus，c
 
 ### 已知限制：31×38 及更大
 
-v2 回溯在 31×38（语料里常见的最大尺寸）能跑，但**每个 candidate 要分钟级**，因为 partition 有 ~120 条 path，每次回溯都要全跑一遍 Kahn 配合 O(N²) 的 blocker 扫描。要 31×38+ 的关卡，请用 `generate:reverse`（单 candidate 亚秒级，但带它那一章里写过的结构指标差距）。v2 ≤ 25×31 很快（单 candidate 秒级）。
+v2 回溯 + Kahn 分配本身很便宜（即便 31×38 也加起来 <100 ms）。真正的耗时大头是**构造后的 `deadlockRate` 过滤** —— 每个 candidate 都要跑 `--rollout-trials` 次随机 play rollout，死锁率超过 `--max-deadlock-rate` 就拒。每次 rollout 要给每个未逃出的箭头做 snapshot/tryPull/restore，开销随 `trials × arrows²` 增长。25×31 在老默认值（`--rollout-trials=100`, `--max-deadlock-rate=0.05`）下要 ~29 s/candidate，占了 ~99 % 墙钟。**2026-05-22 起默认值放宽为 `--rollout-trials=30` 和 `--max-deadlock-rate=0.30`** —— 25×31 几秒内 5/5，31×38 也能跑出来（总时长分钟级，不再是单 candidate 分钟级）。如果需要更严格的过滤，显式传 `--max-deadlock-rate=0.05 --rollout-trials=100` 即可，31×38+ 会很慢。
 
 ### v1（已弃用）
 
@@ -265,7 +265,7 @@ pnpm --filter @ea/tools quality:eval -- --from-dir=/tmp/eval-partition
 | `--kahn-retries` | 20 | 固定几何下 Kahn deadlock 后的重试次数。提高对边界情况有帮助；剩下的让 v2 回溯接管。 |
 | `--max-backtracks` | 20 | 每个 candidate 的 v2 SCC-core 回溯次数。25×31+ 在高 `--target-fill` 下想保 yield 就调到 50–80。 |
 | `--backtrack-chunk` | 3 | 每次回溯额外撤掉这么多最近**被选中**的 path，扰动 SCC 边界让重新生长不会重填到同样的洞里。 |
-| `--max-deadlock-rate` | 0.05 | 随机 pull rollout 死锁率超过这个就拒（默认 `--rollout-trials=100`）。抓出「构造上可解但对贪心人类不友好」的谜题。 |
+| `--max-deadlock-rate` | 0.30 | 随机 pull rollout 死锁率超过这个就拒（默认 `--rollout-trials=30`）。抓出「构造上可解但对贪心人类不友好」的谜题。**2026-05-22 放宽** —— 之前是 0.05/100，那时还没意识到这是 25×31+ 的墙钟瓶颈。要严格的贪心友好批次再调回去。 |
 | `--straight-bias` | 0.65 | path 生长时继续走同一方向的概率。 |
 
 ## 质量评估（`quality-eval.mjs`）

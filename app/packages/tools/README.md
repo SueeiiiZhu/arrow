@@ -16,7 +16,7 @@ All scripts depend on the compiled `@ea/core`, so they run `pnpm -F @ea/core bui
 | `pnpm --filter @ea/tools stat:corpus` | Dump distributional statistics over the full 3548-level corpus (grid sizes, arrow counts, snake lengths, corners, density, facing, tags). |
 | `pnpm --filter @ea/tools generate -- [flags]` | **Procedural level generator** (path-partition algorithm — see below). |
 | `pnpm --filter @ea/tools generate:reverse -- [flags]` | **Reverse-construction generator** (recommended; scales to corpus-median grids — see below). |
-| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first generator v2** — real path-partition + Kahn joint facing/escape-order + targeted SCC-core backtracking. Beats reverse and matches/beats corpus on most structural metrics at 10×10 through 25×31. 31×38 works but minutes per candidate. See "Partition-first generator" below. |
+| `pnpm --filter @ea/tools generate:partition -- [flags]` | **Partition-first generator v2** — real path-partition + Kahn joint facing/escape-order + targeted SCC-core backtracking. Beats reverse and matches/beats corpus on most structural metrics at 10×10 through 25×31. 31×38 usable after the 2026-05-22 `--max-deadlock-rate` default loosening. See "Partition-first generator" below. |
 | `pnpm --filter @ea/tools quality:eval -- --w=W --h=H [--count=N]` | Distributional comparison: reverse-generated batch vs. same-size corpus sample, on fill / init-escapable / bottleneck / greedy-moves / path-length. Also supports `--from-dir=<dir>` to load externally-generated levels (use this to evaluate `generate:partition` output). See "Quality evaluation" below. |
 
 ## Procedural level generator (`generate.mjs`)
@@ -226,7 +226,7 @@ Partition v2 closes the 25×31 gap that v1 couldn't reach: fill matches corpus, 
 
 ### Known limitation: 31×38 and larger
 
-v2 backtracking works on 31×38 (the largest commonly-occurring corpus size) but **takes minutes per candidate** because the partition has ~120 paths and each backtrack triggers a full Kahn re-run with O(N²) blocker-scan. If you need 31×38+ levels, use `generate:reverse` (sub-second per candidate, but with the structural-quality gaps documented in its section). v2 ≤ 25×31 is fast (seconds per candidate).
+v2 backtracking + Kahn assignment are cheap (<100 ms total) even at 31×38. The dominant cost is the **post-construction `deadlockRate` filter** — for every candidate we run `--rollout-trials` random-play rollouts and reject if the deadlock rate exceeds `--max-deadlock-rate`. Each rollout snapshot/tryPull/restores every unescaped arrow, so cost scales with `trials × arrows²`. At 25×31 with the old defaults (`--rollout-trials=100`, `--max-deadlock-rate=0.05`) this was ~29 s/candidate, dominating ~99 % of wall time. **As of 2026-05-22 the defaults are loosened to `--rollout-trials=30` and `--max-deadlock-rate=0.30`** — 25×31 yields 5/5 in seconds, and 31×38 becomes practical (minutes total instead of minutes per candidate). If you need stricter filtering, pass `--max-deadlock-rate=0.05 --rollout-trials=100` explicitly; expect long runs at 31×38+.
 
 ### v1 (deprecated)
 
@@ -265,7 +265,7 @@ Inherits sequencing / chain / bottleneck / deadlock gates from `generate:reverse
 | `--kahn-retries` | 20 | Phase-2 retry budget when Kahn deadlocks on a fixed geometry. Higher helps borderline cases; v2 backtracking handles the rest. |
 | `--max-backtracks` | 20 | v2 SCC-core backtrack budget per candidate. Raise to 50–80 on 25×31+ to keep yield up at high `--target-fill`. |
 | `--backtrack-chunk` | 3 | After each backtrack also drop this many of the most recently *picked* paths, to perturb the SCC boundary so re-growth doesn't refill identical holes. |
-| `--max-deadlock-rate` | 0.05 | Reject if random-pull rollout deadlocks above this rate (`--rollout-trials=100` default). Catches puzzles solvable by construction but unfriendly to greedy human play. |
+| `--max-deadlock-rate` | 0.30 | Reject if random-pull rollout deadlocks above this rate (`--rollout-trials=30` default). Catches puzzles solvable by construction but unfriendly to greedy human play. **Loosened 2026-05-22** — was 0.05/100 before the cost profile of this filter was understood (it dominates wall time at 25×31+). Tighten back if you want strictly greedy-friendly batches. |
 | `--straight-bias` | 0.65 | Probability of continuing in the same direction during path growth. |
 
 ## Quality evaluation (`quality-eval.mjs`)
