@@ -211,20 +211,20 @@ Partition-first only commits to facings AFTER the geometry is pinned, so paths m
 | forced-chain depth (med) | **8** | ~7 | 6 |
 | yield | 5/5 in 11 attempts | 10/10 in 16 attempts | — |
 
-**25×31 (corpus median), count=5, seed=2** vs n=7 corpus levels (re-measured 2026-05-22 after `--max-arrow-len` 12 → 18):
+**25×31, count=5 × seeds 2/3/4 (n=15) vs n=7 corpus levels** (re-measured 2026-05-22 after canPick blocker-max preference + Phase 1 isolated-path reject):
 
 | metric | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 78 | ~64 | 67 |
+| arrows (med) | 79 | ~64 | 67 |
 | fill % (med) | **94 %** | 85 % | 97 % |
-| init-escapable % (med) | 16 % | 30 % | 9 % |
-| bottleneck % (med) | **22 %** | 11 % | 26 % |
-| forced-chain depth (med) | **10** | 7 | 10 |
+| init-escapable % (med) | 15 % | 30 % | 9 % |
+| bottleneck % (med) | **20 %** | 11 % | 26 % |
+| forced-chain depth (med) | **9** | 7 | 10 |
 | path len p50 (med) | **8** | — | 8 |
-| path len p90 (med) | 17 | — | 27 |
-| yield (target-fill=0.85) | 5/5 in 19 attempts | — | — |
+| path len p90 (med) | 16 | — | 27 |
+| yield (target-fill=0.85) | 5/5 in ~15 attempts | — | — |
 
-Partition v2 closes the 25×31 gap that v1 couldn't reach: chain-depth **matches corpus exactly** (10 vs 10), bottleneck within 4pp (22 % vs 26 %), arrow count and path-len p50 also match. The remaining gaps: init-escapable still 7pp above corpus (loosely-anchored ray-clear starts), and path-len p90 still much shorter than corpus (17 vs 27) because partition primitive caps individual paths at `--max-arrow-len` while corpus levels occasionally have one or two snake-like 40+ length arrows. Push `--max-arrow-len` higher only if you specifically want the long-tail; at 24 chainDepth regresses to 8.
+Partition v2 closes the 25×31 gap that v1 couldn't reach: chain-depth within 1 of corpus (9 vs 10), bottleneck within 6pp (20 % vs 26 %), arrow count and path-len p50 also match. The remaining gaps: init-escapable still 6pp above corpus, and path-len p90 still much shorter than corpus (16 vs 27). Both are path-length-rooted — partition primitive caps individual paths at `--max-arrow-len`, so heads sit closer to the grid edge and frequently face off-grid (clear ray = init-escapable). Phase 1 now rejects *isolated* paths (both facing rays escape without crossing any other path) after a 5-path grace period, and Phase 2 `canPick` prefers the facing with more blockers — together these cut init-escapable from ~18 % to ~15 %. Closing the rest requires longer paths, but pushing `--max-arrow-len` past 18 regresses chainDepth (at 24 → 8).
 
 ### Known limitation: 31×38 and larger
 

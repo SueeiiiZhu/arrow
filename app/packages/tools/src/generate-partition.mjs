@@ -144,7 +144,16 @@ function growUntilTarget(W, H, grid, paths, filled, targetCells, rand, opts) {
     // Tentatively place on grid so facingCandidates can see it.
     for (const [x, y] of path) grid[idx(x, y)] = pathId;
     const cands = facingCandidates(path, W, H, grid, pathId);
-    if (cands.length === 0) {
+    // Reject U-bend self-collision (no surviving facing candidates) and —
+    // after a small grace period to seed the partition — paths whose BOTH
+    // facing rays escape the grid without crossing any other path. Such
+    // "isolated" paths are guaranteed init-escapable in the final puzzle
+    // (neither facing has a blocker), and the post-construction filter
+    // can't fix this — the geometry has to be avoided up front. Grace
+    // period: skip the check for the first 5 paths so partition can boot.
+    const isolated =
+      paths.length >= 5 && cands.every((c) => c.allBlockers.length === 0);
+    if (cands.length === 0 || isolated) {
       for (const [x, y] of path) grid[idx(x, y)] = 0;
       failuresSinceProgress++;
       if (failuresSinceProgress >= maxFailures) break;
@@ -297,7 +306,19 @@ function assignFacingsOnce(allCands, rand, opts) {
   const arrows = new Array(N).fill(null);
   const escapeOrder = [];
 
+  // Among the path's pickable facings, prefer the one with MORE blockers.
+  // Both cands satisfy the topo constraint (all their blockers are already
+  // picked = will be escaped before this path); choosing the one with more
+  // blockers means this path's ray initially crosses more arrow bodies, so
+  // it's NOT init-escapable in the final puzzle. Empirically this is the
+  // dominant lever on init-escapable %: just respecting the topo order isn't
+  // enough — the partition geometry often gives both endpoints a clear ray
+  // (one because it points off-grid, the other because its blockers all happen
+  // to be picked already), and picking the off-grid endpoint leaks an
+  // init-escapable arrow.
   const canPick = (i) => {
+    let best = null;
+    let bestBlockers = -1;
     for (const c of allCands[i]) {
       let ok = true;
       for (const b of c.allBlockers) {
@@ -306,9 +327,12 @@ function assignFacingsOnce(allCands, rand, opts) {
           break;
         }
       }
-      if (ok) return c;
+      if (ok && c.allBlockers.length > bestBlockers) {
+        best = c;
+        bestBlockers = c.allBlockers.length;
+      }
     }
-    return null;
+    return best;
   };
 
   let progress = true;

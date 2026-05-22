@@ -211,20 +211,20 @@ Partition-first 在几何钉死之后**才**承诺 facing，所以 path 之间�
 | 强制链深 (med) | **8** | ~7 | 6 |
 | yield | 5/5 在 11 次尝试内 | 10/10 在 16 次尝试内 | — |
 
-**25×31（corpus 中位），count=5，seed=2** vs n=7 corpus 关卡（2026-05-22 `--max-arrow-len` 12 → 18 后重测）：
+**25×31，count=5 × seed 2/3/4 (n=15)** vs n=7 corpus 关卡（2026-05-22 加入 canPick blocker-max 偏好 + Phase 1 isolated-path 拒绝后重测）：
 
 | 指标 | partition v2 | reverse-gen v1 | corpus (n=7) |
 | --- | --- | --- | --- |
-| arrows (med) | 78 | ~64 | 67 |
+| arrows (med) | 79 | ~64 | 67 |
 | fill % (med) | **94 %** | 85 % | 97 % |
-| init-escapable % (med) | 16 % | 30 % | 9 % |
-| bottleneck % (med) | **22 %** | 11 % | 26 % |
-| 强制链深 (med) | **10** | 7 | 10 |
+| init-escapable % (med) | 15 % | 30 % | 9 % |
+| bottleneck % (med) | **20 %** | 11 % | 26 % |
+| 强制链深 (med) | **9** | 7 | 10 |
 | path len p50 (med) | **8** | — | 8 |
-| path len p90 (med) | 17 | — | 27 |
-| yield (target-fill=0.85) | 5/5 在 19 次尝试内 | — | — |
+| path len p90 (med) | 16 | — | 27 |
+| yield (target-fill=0.85) | 5/5 在 ~15 次尝试内 | — | — |
 
-partition v2 把 v1 摸不到的 25×31 缺口堵上了：强制链深**完全对齐** corpus（10 vs 10），bottleneck 差 4pp 之内（22 % vs 26 %），arrow 数和 path-len p50 也都对齐。还剩两个 gap：init-escapable 比 corpus 高 7pp（无 blocker 的射线起手仍偏松），以及 path-len p90 短了不少（17 vs 27）—— partition 原语本质上把单条 path 上限卡在 `--max-arrow-len`，而 corpus 偶尔会有一两条 40+ 长度的蛇型箭头。要 long-tail 就把 `--max-arrow-len` 调高，但调到 24 时强制链深会退到 8。
+partition v2 把 v1 摸不到的 25×31 缺口堵上了：强制链深差 1 之内（9 vs 10），bottleneck 差 6pp 之内（20 % vs 26 %），arrow 数和 path-len p50 也都对齐。还剩两个 gap：init-escapable 比 corpus 高 6pp，path-len p90 短了不少（16 vs 27）。两者**同根**——partition 原语把单条 path 上限卡在 `--max-arrow-len`，head 离边沿近，常常朝外出界（射线空 = init-escapable）。Phase 1 现在会拒绝「两端 facing 都不挡任何 path 的 isolated path」（前 5 条 path 宽限期），Phase 2 的 `canPick` 也优先选 blocker 更多的 facing —— 合起来把 init-escapable 从 ~18 % 降到 ~15 %。再往下就得让 path 变长，但 `--max-arrow-len` 调到 18 以上强制链深会退（24 时跌到 8）。
 
 ### 已知限制：31×38 及更大
 
