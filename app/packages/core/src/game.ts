@@ -162,6 +162,35 @@ export interface PullResult {
   won: boolean;
 }
 
+/**
+ * Compact snapshot of the per-arrow mutable state + win flag. Cheap to clone
+ * (just two numbers per arrow + a string), enough to feed Undo / solver
+ * search / state hashing. Doesn't include `level` or `levelMask` — those are
+ * immutable for the life of a GameState.
+ */
+export interface GameSnapshot {
+  readonly arrows: ReadonlyArray<{ progress: number; escaped: boolean }>;
+  readonly status: "playing" | "won";
+}
+
+export function snapshotGame(state: GameState): GameSnapshot {
+  return {
+    arrows: state.arrows.map((a) => ({ progress: a.progress, escaped: a.escaped })),
+    status: state.status,
+  };
+}
+
+export function restoreGame(state: GameState, snap: GameSnapshot): void {
+  for (let i = 0; i < state.arrows.length; i++) {
+    const src = snap.arrows[i];
+    if (!src) continue;
+    const dst = state.arrows[i]!;
+    dst.progress = src.progress;
+    dst.escaped = src.escaped;
+  }
+  state.status = snap.status;
+}
+
 export function tryPull(state: GameState, arrowId: number): PullResult {
   const arrow = state.arrows[arrowId];
   if (!arrow || arrow.escaped || state.status !== "playing") {

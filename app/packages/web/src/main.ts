@@ -4,14 +4,18 @@ import {
   decodeCompact,
   ensureShuffleSeed,
   findArrowAt,
+  findNextMove,
+  type GameSnapshot,
   type GameState,
   loadLevel,
   loadProgress,
   type Progress,
   type ProgressStorage,
   resetGame,
+  restoreGame,
   saveProgress,
   shuffleByDifficulty,
+  snapshotGame,
   tryPull,
   validateLevel,
 } from "@ea/core";
@@ -99,8 +103,12 @@ function ensureRAF(): void {
   const step = (): void => {
     rafId = 0;
     render();
-    if (tweens.size > 0 || shakes.size > 0 || isWinAnimating()) {
+    if (tweens.size > 0 || shakes.size > 0 || isWinAnimating() || isHintActive()) {
       rafId = requestAnimationFrame(step);
+    } else if (hintArrowId != null) {
+      // Hint timed out — clear and repaint once without the halo.
+      hintArrowId = null;
+      render();
     }
   };
   rafId = requestAnimationFrame(step);
@@ -266,6 +274,8 @@ const status = document.getElementById("status") as HTMLSpanElement;
 const prevBtn = document.getElementById("prev-btn") as HTMLButtonElement;
 const nextBtn = document.getElementById("next-btn") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset-btn") as HTMLButtonElement;
+const undoBtn = document.getElementById("undo-btn") as HTMLButtonElement;
+const hintBtn = document.getElementById("hint-btn") as HTMLButtonElement;
 const canvas = document.getElementById("board") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 
@@ -288,6 +298,33 @@ const pickerList = document.getElementById("picker-list") as HTMLDivElement;
 let game: GameState | null = null;
 let currentKey: string | null = null;
 let loadingKey: string | null = null;
+
+// Undo / hint state ---------------------------------------------------------
+const UNDO_CAP = 20;
+const undoStack: GameSnapshot[] = [];
+let hintArrowId: number | null = null;
+let hintStart = 0;
+const HINT_DURATION = 2500; // ms before highlight auto-fades
+
+function clearUndoStack(): void {
+  undoStack.length = 0;
+  refreshHistoryControls();
+}
+
+function clearHint(): void {
+  if (hintArrowId == null) return;
+  hintArrowId = null;
+  render();
+}
+
+function refreshHistoryControls(): void {
+  undoBtn.disabled = undoStack.length === 0;
+  hintBtn.disabled = !game || game.status !== "playing" || loadingKey != null;
+}
+
+function isHintActive(): boolean {
+  return hintArrowId != null && performance.now() - hintStart < HINT_DURATION;
+}
 
 function dpr(): number {
   return Math.min(window.devicePixelRatio || 1, 2);
@@ -333,11 +370,24 @@ function render(): void {
     shakeOffsets.set(id, off);
   }
 
+  let highlightArrowId: number | null = null;
+  let highlightPulse = 1;
+  if (isHintActive()) {
+    highlightArrowId = hintArrowId;
+    const u = (performance.now() - hintStart) / HINT_DURATION;
+    // 0.55 + 0.45*sin gives a perceptible but non-flickery pulse; fade tail.
+    const pulseAmp = 0.55 + 0.45 * Math.sin(performance.now() * 0.012);
+    const fade = u < 0.8 ? 1 : Math.max(0, 1 - (u - 0.8) / 0.2);
+    highlightPulse = pulseAmp * fade;
+  }
+
   drawGame(ctx as any, game, t, {
     showPaths: showPathsBox.checked,
     progressOverride,
     shakeOffsets,
     drawEscapedIds,
+    highlightArrowId,
+    highlightPulse,
   });
 
   if (game.status === "won" && winStart != null) {
@@ -381,10 +431,13 @@ function selectLevel(key: string): void {
   loadingKey = key;
   game = null;
   clearAnimations();
+  clearUndoStack();
+  hintArrowId = null;
   winStart = null;
   meta.textContent = "加载中…";
   updatePickerLabel();
   updateStatus();
+  refreshHistoryControls();
   render();
   resolveLevel(key)
     .then((compact) => {
@@ -404,6 +457,7 @@ function selectLevel(key: string): void {
       progress.lastKey = key;
       persist();
       updateStatus();
+      refreshHistoryControls();
       render();
     })
     .catch((e) => {
@@ -445,9 +499,12 @@ function handlePointer(clientX: number, clientY: number): void {
   const arrow = findArrowAt(game, cell);
   if (!arrow) return;
   const before = arrow.progress;
+  const snap = snapshotGame(game);
   const result = tryPull(game, arrow.id);
   const after = arrow.progress;
   if (result.steps > 0) {
+    pushUndo(snap);
+    if (hintArrowId === arrow.id) clearHint();
     startTween(arrow.id, before, after, result.escaped);
     if (result.escaped) synth.escape();
     else synth.whoosh(result.steps);
@@ -463,7 +520,56 @@ function handlePointer(clientX: number, clientY: number): void {
     ensureRAF();
   }
   updateStatus();
+  refreshHistoryControls();
   render();
+}
+
+function pushUndo(snap: GameSnapshot): void {
+  undoStack.push(snap);
+  if (undoStack.length > UNDO_CAP) undoStack.shift();
+  refreshHistoryControls();
+}
+
+function doUndo(): void {
+  if (!game) return;
+  if (loadingKey != null) return;
+  if (isAnimating()) return;
+  const snap = undoStack.pop();
+  if (!snap) return;
+  restoreGame(game, snap);
+  clearAnimations();
+  winStart = null;
+  hintArrowId = null;
+  synth.click();
+  updateStatus();
+  refreshHistoryControls();
+  render();
+}
+
+function doHint(): void {
+  if (!game || game.status !== "playing") return;
+  if (loadingKey != null || isAnimating()) return;
+  hintBtn.disabled = true;
+  hintBtn.textContent = "💡 思考…";
+  // findNextMove is synchronous; defer one frame so the disabled-state paints
+  // before we possibly block for a few hundred ms on a hard level.
+  requestAnimationFrame(() => {
+    const moveId = game ? findNextMove(game, Date.now() + 2000) : null;
+    hintBtn.textContent = "💡 提示";
+    if (moveId == null) {
+      hintBtn.textContent = "💡 无解";
+      setTimeout(() => {
+        hintBtn.textContent = "💡 提示";
+        refreshHistoryControls();
+      }, 1200);
+      return;
+    }
+    hintArrowId = moveId;
+    hintStart = performance.now();
+    synth.click();
+    refreshHistoryControls();
+    ensureRAF();
+  });
 }
 
 // --- picker -----------------------------------------------------------------
@@ -578,10 +684,16 @@ resetBtn.addEventListener("click", () => {
   }
   resetGame(game);
   clearAnimations();
+  clearUndoStack();
+  hintArrowId = null;
   winStart = null;
   updateStatus();
+  refreshHistoryControls();
   render();
 });
+
+undoBtn.addEventListener("click", doUndo);
+hintBtn.addEventListener("click", doHint);
 
 pickerBtn.addEventListener("click", openPicker);
 pickerClose.addEventListener("click", closePicker);
@@ -591,6 +703,16 @@ pickerSearch.addEventListener("keydown", (ev) => {
 });
 window.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape" && !pickerPanel.hidden) closePicker();
+  // Don't steal keystrokes from the picker search input.
+  if (document.activeElement === pickerSearch) return;
+  if (!pickerPanel.hidden) return;
+  if (ev.key === "z" || ev.key === "Z") {
+    ev.preventDefault();
+    doUndo();
+  } else if (ev.key === "h" || ev.key === "H") {
+    ev.preventDefault();
+    doHint();
+  }
 });
 
 canvas.addEventListener("click", (ev) => handlePointer(ev.clientX, ev.clientY));

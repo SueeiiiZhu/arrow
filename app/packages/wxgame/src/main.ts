@@ -4,14 +4,18 @@ import {
   decodeCompact,
   ensureShuffleSeed,
   findArrowAt,
+  findNextMove,
+  type GameSnapshot,
   type GameState,
   loadLevel,
   loadProgress,
   type Progress,
   type ProgressStorage,
   resetGame,
+  restoreGame,
   saveProgress,
   shuffleByDifficulty,
+  snapshotGame,
   tryPull,
 } from "@ea/core";
 import {
@@ -106,6 +110,7 @@ declare global {
 // variable to keep the call opaque to it. `require` is provided by the
 // wxgame CJS host.
 declare const require: (path: string) => unknown;
+declare function setTimeout(handler: () => void, timeout: number): number;
 const runtimeRequire = require as unknown as (p: string) => unknown;
 
 const mainByKey = new Map<string, MainLevel>();
@@ -177,9 +182,30 @@ async function resolveLevel(key: string): Promise<CompactLevel | null> {
 
 // --- game state ----------------------------------------------------------
 
+// HUD is a 80-px tall bar at the top: y=0..56 holds the info row
+// (level name | hearts | status), y=56..80 holds 5 button hit zones
+// (prev / hint / reset / undo / next), each cssW/5 wide.
+const HUD_H = 80;
+const HUD_INFO_H = 56;
+const HUD_BTN_H = HUD_H - HUD_INFO_H;
+
 let levelIndex = 0;
 let game: GameState | null = null;
 let loadingKey: string | null = null;
+
+// Undo / hint state
+const UNDO_CAP = 20;
+const undoStack: GameSnapshot[] = [];
+let hintArrowId: number | null = null;
+let hintStart = 0;
+let hintBusy = false;
+const HINT_DURATION = 2500;
+function clearUndoStack(): void {
+  undoStack.length = 0;
+}
+function isHintActive(): boolean {
+  return hintArrowId != null && performance.now() - hintStart < HINT_DURATION;
+}
 
 // --- animation state -----------------------------------------------------
 
@@ -242,9 +268,13 @@ function ensureRAF(): void {
       shakes.size > 0 ||
       isWinAnimating() ||
       loadingKey != null ||
-      noLivesOpen
+      noLivesOpen ||
+      isHintActive()
     ) {
       rafId = requestAnimationFrame(step);
+    } else if (hintArrowId != null) {
+      hintArrowId = null;
+      render();
     }
   };
   rafId = requestAnimationFrame(step);
@@ -333,6 +363,9 @@ function selectLevelByIndex(i: number): void {
   loadingKey = key;
   game = null;
   clearAnimations();
+  clearUndoStack();
+  hintArrowId = null;
+  hintBusy = false;
   winStart = null;
   ensureRAF();
   render();
@@ -365,8 +398,8 @@ function render(): void {
   ctx.fillRect(0, 0, cssW, cssH);
 
   if (game) {
-    const t = fitView(game.level, cssW, cssH - 56);
-    const view2 = { ...t, oy: t.oy + 56 };
+    const t = fitView(game.level, cssW, cssH - HUD_H);
+    const view2 = { ...t, oy: t.oy + HUD_H };
     const now = performance.now();
     const progressOverride = new Map<number, number>();
     const drawEscapedIds = new Set<number>();
@@ -387,11 +420,22 @@ function render(): void {
       }
       shakeOffsets.set(id, off);
     }
+    let highlightArrowId: number | null = null;
+    let highlightPulse = 1;
+    if (isHintActive()) {
+      highlightArrowId = hintArrowId;
+      const u = (now - hintStart) / HINT_DURATION;
+      const pulseAmp = 0.55 + 0.45 * Math.sin(now * 0.012);
+      const fade = u < 0.8 ? 1 : Math.max(0, 1 - (u - 0.8) / 0.2);
+      highlightPulse = pulseAmp * fade;
+    }
     drawGame(ctx as any, game, view2, {
       showPaths: false,
       progressOverride,
       shakeOffsets,
       drawEscapedIds,
+      highlightArrowId,
+      highlightPulse,
     });
   }
   drawHud();
@@ -461,18 +505,29 @@ function drawHearts(centerX: number, centerY: number): void {
   }
 }
 
+type HudButton = "prev" | "hint" | "reset" | "undo" | "next";
+const HUD_BUTTON_ORDER: HudButton[] = ["prev", "hint", "reset", "undo", "next"];
+const HUD_BUTTON_LABEL: Record<HudButton, string> = {
+  prev: "‹ 上一",
+  hint: "💡 提示",
+  reset: "↻ 重开",
+  undo: "↶ 撤销",
+  next: "下一 ›",
+};
+
 function drawHud(): void {
+  // Info row
   ctx.fillStyle = "#0f172a";
-  ctx.fillRect(0, 0, cssW, 56);
+  ctx.fillRect(0, 0, cssW, HUD_H);
   ctx.fillStyle = "#e2e8f0";
   ctx.font = "16px sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   const key = ORDERED_KEYS[levelIndex] ?? "";
   const name = key.replace(/^\d+__/, "").replace(/\.json$/, "");
-  ctx.fillText(`${levelIndex + 1}/${ORDERED_KEYS.length}  ${name}`, 12, 28);
+  ctx.fillText(`${levelIndex + 1}/${ORDERED_KEYS.length}  ${name}`, 12, 24);
 
-  drawHearts(cssW / 2, 28);
+  drawHearts(cssW / 2, 24);
 
   if (game) {
     const remaining = game.arrows.filter((a) => !a.escaped).length;
@@ -482,13 +537,67 @@ function drawHud(): void {
     ctx.fillText(
       game.status === "won" ? "通关！" : `剩余 ${remaining}/${game.arrows.length}`,
       cssW - 12,
-      28,
+      24,
     );
   } else if (loadingKey != null) {
     ctx.textAlign = "right";
     ctx.fillStyle = "#94a3b8";
     ctx.font = "16px sans-serif";
-    ctx.fillText("加载中...", cssW - 12, 28);
+    ctx.fillText("加载中...", cssW - 12, 24);
+  }
+
+  // Button row — 5 evenly-spaced labels with a thin separator above.
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, HUD_INFO_H + 0.5);
+  ctx.lineTo(cssW, HUD_INFO_H + 0.5);
+  ctx.stroke();
+
+  const btnW = cssW / 5;
+  ctx.font = "13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < 5; i++) {
+    const btn = HUD_BUTTON_ORDER[i]!;
+    const enabled = isHudButtonEnabled(btn);
+    let bg = "#0f172a";
+    let fg = enabled ? "#e2e8f0" : "#475569";
+    if (btn === "hint" && hintBusy) {
+      bg = "#7c2d12";
+      fg = "#fde047";
+    } else if (btn === "hint" && enabled) {
+      fg = "#fbbf24";
+    } else if (btn === "undo" && enabled) {
+      fg = "#cbd5e1";
+    }
+    ctx.fillStyle = bg;
+    ctx.fillRect(i * btnW, HUD_INFO_H, btnW, HUD_BTN_H);
+    if (i > 0) {
+      ctx.strokeStyle = "#1e293b";
+      ctx.beginPath();
+      ctx.moveTo(i * btnW + 0.5, HUD_INFO_H);
+      ctx.lineTo(i * btnW + 0.5, HUD_H);
+      ctx.stroke();
+    }
+    ctx.fillStyle = fg;
+    ctx.fillText(HUD_BUTTON_LABEL[btn], i * btnW + btnW / 2, HUD_INFO_H + HUD_BTN_H / 2);
+  }
+}
+
+function isHudButtonEnabled(btn: HudButton): boolean {
+  if (loadingKey != null) return false;
+  switch (btn) {
+    case "prev":
+      return levelIndex > 0;
+    case "next":
+      return levelIndex < ORDERED_KEYS.length - 1;
+    case "reset":
+      return !!game;
+    case "undo":
+      return !!game && undoStack.length > 0;
+    case "hint":
+      return !!game && game.status === "playing" && !hintBusy;
   }
 }
 
@@ -561,7 +670,7 @@ function pointInRect(
 
 function drawLoadingOverlay(): void {
   ctx.fillStyle = "rgba(15,23,42,0.72)";
-  ctx.fillRect(0, 56, cssW, cssH - 56);
+  ctx.fillRect(0, HUD_H, cssW, cssH - HUD_H);
   ctx.fillStyle = "#e2e8f0";
   ctx.font = `${Math.floor(Math.min(cssW, cssH) * 0.06)}px sans-serif`;
   ctx.textAlign = "center";
@@ -572,12 +681,11 @@ function drawLoadingOverlay(): void {
 
 // --- input ----------------------------------------------------------------
 
-function hitHud(x: number, y: number): "prev" | "next" | "reset" | null {
-  if (y > 56) return null;
-  if (x < cssW * 0.25) return "prev";
-  if (x > cssW * 0.75) return "next";
-  if (x > cssW * 0.4 && x < cssW * 0.6) return "reset";
-  return null;
+function hitHud(x: number, y: number): HudButton | null {
+  if (y < HUD_INFO_H || y > HUD_H) return null;
+  const i = Math.floor(x / (cssW / 5));
+  if (i < 0 || i > 4) return null;
+  return HUD_BUTTON_ORDER[i]!;
 }
 
 wx.onTouchStart((e: WxTouchEvent) => {
@@ -610,32 +718,40 @@ wx.onTouchStart((e: WxTouchEvent) => {
   }
 
   const hud = hitHud(px, py);
-  if (hud === "prev") {
-    selectLevelByIndex(levelIndex - 1);
-    return;
-  }
-  if (hud === "next") {
-    selectLevelByIndex(levelIndex + 1);
-    return;
-  }
-  if (hud === "reset") {
-    if (!game) return;
-    if (!tryConsumeLife()) {
-      noLivesOpen = true;
-      ensureRAF();
-      render();
+  if (hud) {
+    if (!isHudButtonEnabled(hud)) {
+      synth.thud();
       return;
     }
-    resetGame(game);
-    clearAnimations();
-    winStart = null;
-    render();
+    synth.click();
+    if (hud === "prev") {
+      selectLevelByIndex(levelIndex - 1);
+    } else if (hud === "next") {
+      selectLevelByIndex(levelIndex + 1);
+    } else if (hud === "reset") {
+      if (!tryConsumeLife()) {
+        noLivesOpen = true;
+        ensureRAF();
+        render();
+        return;
+      }
+      resetGame(game!);
+      clearAnimations();
+      clearUndoStack();
+      hintArrowId = null;
+      winStart = null;
+      render();
+    } else if (hud === "undo") {
+      doUndo();
+    } else if (hud === "hint") {
+      doHint();
+    }
     return;
   }
 
   if (!game || isAnimating()) return;
-  const view = fitView(game.level, cssW, cssH - 56);
-  const view2 = { ...view, oy: view.oy + 56 };
+  const view = fitView(game.level, cssW, cssH - HUD_H);
+  const view2 = { ...view, oy: view.oy + HUD_H };
   const cell = pickCell(px, py, view2);
   if (cell.x < 0 || cell.y < 0 || cell.x >= game.level.width || cell.y >= game.level.height) {
     return;
@@ -643,9 +759,13 @@ wx.onTouchStart((e: WxTouchEvent) => {
   const arrow = findArrowAt(game, cell);
   if (!arrow) return;
   const before = arrow.progress;
+  const snap = snapshotGame(game);
   const r = tryPull(game, arrow.id);
   const after = arrow.progress;
   if (r.steps > 0) {
+    undoStack.push(snap);
+    if (undoStack.length > UNDO_CAP) undoStack.shift();
+    if (hintArrowId === arrow.id) hintArrowId = null;
     startTween(arrow.id, before, after, r.escaped);
     if (r.escaped) synth.escape();
     else synth.whoosh(r.steps);
@@ -663,6 +783,36 @@ wx.onTouchStart((e: WxTouchEvent) => {
   }
   render();
 });
+
+function doUndo(): void {
+  if (!game || loadingKey != null || isAnimating()) return;
+  const snap = undoStack.pop();
+  if (!snap) return;
+  restoreGame(game, snap);
+  clearAnimations();
+  winStart = null;
+  hintArrowId = null;
+  ensureRAF();
+  render();
+}
+
+function doHint(): void {
+  if (!game || game.status !== "playing") return;
+  if (loadingKey != null || isAnimating() || hintBusy) return;
+  hintBusy = true;
+  render();
+  // Defer a frame so the "thinking…" highlight paints before solver blocks.
+  setTimeout(() => {
+    const moveId = game ? findNextMove(game, Date.now() + 1500) : null;
+    hintBusy = false;
+    if (moveId != null) {
+      hintArrowId = moveId;
+      hintStart = performance.now();
+      ensureRAF();
+    }
+    render();
+  }, 30);
+}
 
 // --- bootstrap ------------------------------------------------------------
 

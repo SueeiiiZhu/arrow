@@ -48,6 +48,14 @@ The only piece of **APK-derived content** that lives in this repo is the 3548 le
 
 详见 [`app/AGENTS.md`](app/AGENTS.md) 红线 #1 / #2。
 
+## 在线试玩 / Live demo
+
+H5 版本通过 GitHub Pages 自动部署，每次 push 到 `main` 后约 1-2 分钟生效：
+
+**<https://sueeiiizhu.github.io/arrow/>**
+
+部署流程定义在 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml)（`pnpm build:web` with `BASE_PATH=/arrow/` → `actions/deploy-pages@v4`）。首次启用需要在仓库 *Settings → Pages → Source* 选 **GitHub Actions**。
+
 ## 快速跑起来 / Quickstart
 
 ```bash

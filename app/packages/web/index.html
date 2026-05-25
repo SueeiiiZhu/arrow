@@ -13,8 +13,14 @@
       header select, header input { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; padding: 4px 8px; border-radius: 4px; }
       header button { background: #3b82f6; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; }
       header button:hover { background: #2563eb; }
+      header button:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
+      header button:disabled:hover { background: #475569; }
       #picker-btn { background: #334155; }
       #picker-btn:hover { background: #475569; }
+      #undo-btn { background: #64748b; }
+      #undo-btn:hover:not(:disabled) { background: #475569; }
+      #hint-btn { background: #f59e0b; }
+      #hint-btn:hover:not(:disabled) { background: #d97706; }
       main { flex: 1; position: relative; overflow: hidden; }
       canvas { display: block; width: 100%; height: 100%; touch-action: none; }
       .info { position: absolute; bottom: 8px; left: 8px; font-size: 12px; opacity: 0.6; }
@@ -65,6 +71,8 @@
         <label><input type="checkbox" id="show-paths" /> 显示路径</label>
         <button id="prev-btn">‹ 上一关</button>
         <button id="next-btn">下一关 ›</button>
+        <button id="undo-btn" title="撤销上一步 (Z)" disabled>↶ 撤销</button>
+        <button id="hint-btn" title="提示下一步 (H)">💡 提示</button>
         <button id="reset-btn">重开</button>
         <span id="meta" style="opacity:0.7;font-size:12px;"></span>
         <span id="lives" style="margin-left:auto;">

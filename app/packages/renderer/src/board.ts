@@ -50,6 +50,8 @@ export interface DrawOptions {
   gridLineWidth: number;
   showPaths: boolean;
   highlightArrowId: number | null;
+  /** 0..1 alpha multiplier for the highlight halo. Lets the caller pulse it via rAF. */
+  highlightPulse: number;
   /** override an arrow's effective progress (used for animation). */
   progressOverride: Map<number, number> | null;
   /** per-arrow pixel offset added during rendering (for shake feedback). */
@@ -65,6 +67,7 @@ export const defaultOptions: DrawOptions = {
   gridLineWidth: 1,
   showPaths: false,
   highlightArrowId: null,
+  highlightPulse: 1,
   progressOverride: null,
   shakeOffsets: null,
   drawEscapedIds: null,
@@ -122,7 +125,9 @@ export function drawGame(
 
     if (o.showPaths) drawPath(ctx, arrow.data.path, t, color, 0.12);
 
-    drawBody(ctx, body, t, color, o.highlightArrowId === arrow.id);
+    const hinted = o.highlightArrowId === arrow.id;
+    if (hinted) drawHintHalo(ctx, body, t, o.highlightPulse);
+    drawBody(ctx, body, t, color, hinted);
     drawTailCap(ctx, tailPos, t, color);
     drawArrowGlyph(ctx, headPos, f, t, color);
 
@@ -212,6 +217,42 @@ function drawBody(
     }
   }
   ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Golden halo drawn behind the body when this arrow is the hint pick.
+ * Two outset strokes of widening radius produce a soft glow without
+ * shadowBlur (wxgame canvas doesn't support shadow* reliably).
+ */
+function drawHintHalo(
+  ctx: DrawCtx,
+  body: ReadonlyArray<Vec2>,
+  t: ViewTransform,
+  pulse: number,
+): void {
+  if (body.length === 0) return;
+  const baseLW = Math.max(4, t.cell * 0.72);
+  ctx.strokeStyle = "#fde047"; // amber-300
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (let pass = 0; pass < 2; pass++) {
+    ctx.globalAlpha = pulse * (pass === 0 ? 0.35 : 0.6);
+    ctx.lineWidth = baseLW + (pass === 0 ? t.cell * 0.55 : t.cell * 0.25);
+    ctx.beginPath();
+    if (body.length === 1) {
+      const c = cellCenter(body[0]!, t);
+      ctx.moveTo(c.cx, c.cy);
+      ctx.lineTo(c.cx, c.cy);
+    } else {
+      for (let k = 0; k < body.length; k++) {
+        const c = cellCenter(body[k]!, t);
+        if (k === 0) ctx.moveTo(c.cx, c.cy);
+        else ctx.lineTo(c.cx, c.cy);
+      }
+    }
+    ctx.stroke();
+  }
   ctx.globalAlpha = 1;
 }
 
