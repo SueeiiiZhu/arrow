@@ -63,7 +63,7 @@ const gameJson = {
   deviceOrientation: "portrait",
   showStatusBar: false,
   networkTimeout: { request: 10000 },
-  subpackages: packs.map((_, p) => ({ name: `pack${p}`, root: `pack${p}/` })),
+  subpackages: packs.map((_, p) => ({ name: `pack${p}`, root: `pack${p}/`, entry: "game.js" })),
 };
 await writeFile(resolve(OUT_DIR, "game.json"), JSON.stringify(gameJson, null, 2), "utf8");
 

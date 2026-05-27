@@ -1,3 +1,19 @@
+// Polyfill for performance.now() in WeChat mini-game environment
+if (typeof performance === "undefined") {
+  (globalThis as any).performance = {
+    now(): number {
+      return Date.now();
+    },
+  };
+}
+
+// Global error handler for debugging
+if (typeof wx !== "undefined" && wx.onError) {
+  wx.onError((error: string) => {
+    console.error("[wxgame] Global error:", error);
+  });
+}
+
 import {
   type CompactLevel,
   createGame,
@@ -79,7 +95,11 @@ const ORDERED_KEYS = shuffleByDifficulty(ALL_KEYS, shuffleSeed);
 // --- canvas ---------------------------------------------------------------
 
 const sys = wx.getSystemInfoSync();
+console.log("[wxgame] System info:", sys);
+
 const canvas = (GameGlobal.canvas ?? wx.createCanvas()) as WxCanvas;
+console.log("[wxgame] Canvas created:", canvas ? "success" : "failed");
+
 canvas.width = Math.floor(sys.windowWidth * sys.pixelRatio);
 canvas.height = Math.floor(sys.windowHeight * sys.pixelRatio);
 const ctx = canvas.getContext("2d");
@@ -87,6 +107,8 @@ ctx.setTransform(sys.pixelRatio, 0, 0, sys.pixelRatio, 0, 0);
 
 const cssW = sys.windowWidth;
 const cssH = sys.windowHeight;
+
+console.log(`[wxgame] Canvas size: ${canvas.width}x${canvas.height}, CSS size: ${cssW}x${cssH}`);
 
 // --- subpackage / level catalog --------------------------------------------
 //
@@ -394,7 +416,13 @@ function selectLevelByIndex(i: number): void {
 
 // --- render ---------------------------------------------------------------
 
+let renderCount = 0;
 function render(): void {
+  renderCount++;
+  if (renderCount <= 3) {
+    console.log(`[wxgame] render() called #${renderCount}, game=${!!game}, loadingKey=${loadingKey}`);
+  }
+
   ctx.fillStyle = "#0b1220";
   ctx.fillRect(0, 0, cssW, cssH);
 
@@ -817,9 +845,15 @@ function doHint(): void {
 
 // --- bootstrap ------------------------------------------------------------
 
+console.log("[wxgame] Bootstrap starting...");
+console.log(`[wxgame] Total levels: ${ORDERED_KEYS.length}, Packs: ${PACK_COUNT}`);
+
 // Restore last-played level if it's known; else level 0.
 const restoreIdx = progress.lastKey ? ORDERED_KEYS.indexOf(progress.lastKey) : -1;
+console.log(`[wxgame] Restoring level index: ${restoreIdx}, key: ${progress.lastKey || "none"}`);
 selectLevelByIndex(restoreIdx >= 0 ? restoreIdx : 0);
+
+console.log("[wxgame] Bootstrap complete");
 
 // Surface PACK_COUNT for inspection in devtools.
 void PACK_COUNT;

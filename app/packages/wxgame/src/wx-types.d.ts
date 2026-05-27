@@ -86,6 +86,9 @@ interface WxAPI {
   // Rewarded video ad (optional — only present when the developer has
   // configured an ad unit in mp.weixin.qq.com). We handle absence.
   createRewardedVideoAd?(opts: { adUnitId: string }): WxRewardedVideoAd;
+  // Error handling
+  onError?(cb: (error: string) => void): void;
+  offError?(cb: (error: string) => void): void;
 }
 
 interface WxRewardedVideoAd {
@@ -109,3 +112,10 @@ declare const GameGlobal: {
 declare function requestAnimationFrame(cb: (ts: number) => void): number;
 declare function cancelAnimationFrame(id: number): void;
 declare const performance: { now(): number };
+
+// Console is available in wxgame runtime
+declare const console: {
+  log(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+};
