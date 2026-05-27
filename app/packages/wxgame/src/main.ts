@@ -108,7 +108,8 @@ declare global {
 // entry file ourselves. esbuild would try to statically resolve a literal
 // `require("./pack0/...")` at bundle time, so we route through a runtime
 // variable to keep the call opaque to it. `require` is provided by the
-// wxgame CJS host.
+// wxgame CJS host. The entry file is `game.js` per wxgame convention so
+// DevTools' compile pass finds it (see bundle.mjs header).
 declare const require: (path: string) => unknown;
 declare function setTimeout(handler: () => void, timeout: number): number;
 const runtimeRequire = require as unknown as (p: string) => unknown;
@@ -130,7 +131,7 @@ function loadPack(packIdx: number): Promise<PackEntry[]> {
         name: `pack${packIdx}`,
         success: () => {
           try {
-            runtimeRequire(`./pack${packIdx}/index.js`);
+            runtimeRequire(`./pack${packIdx}/game.js`);
           } catch (e) {
             reject({ errMsg: `require pack${packIdx} failed: ${String(e)}` });
             return;

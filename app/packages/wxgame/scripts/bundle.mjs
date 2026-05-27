@@ -1,8 +1,11 @@
 // Build the wxgame distribution:
 //   dist/wxgame/game.js               main bundle (esbuild)
 //   dist/wxgame/game.json             wx-game manifest, declares subpackages
-//   dist/wxgame/packN/index.js        each subpackage's level data (plain JS,
-//                                     sets globalThis.__EA_PACK_DATA[N])
+//   dist/wxgame/packN/game.js         each subpackage's level data (plain JS,
+//                                     sets globalThis.__EA_PACK_DATA[N]).
+//                                     File MUST be named `game.js` — wxgame
+//                                     DevTools' compile pass refuses to build
+//                                     if `<subpackage-root>/game.js` is absent.
 //
 // The subpackage JS files are pure data: no imports, no esbuild pass.
 
@@ -51,7 +54,7 @@ for (let p = 0; p < packs.length; p++) {
       null,
       0,
     )};\n`;
-  await writeFile(resolve(dir, "index.js"), body, "utf8");
+  await writeFile(resolve(dir, "game.js"), body, "utf8");
 }
 
 // --- manifest ---------------------------------------------------------------
