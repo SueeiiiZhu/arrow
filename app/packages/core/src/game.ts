@@ -17,13 +17,20 @@ import type { ArrowData, LevelData, Vec2 } from "./types.js";
  * the moment the head arrives, occupied by some non-escaped arrow's body
  * cell. Other arrows don't move during this pull, so their bodies are
  * snapshot once. This arrow's body DOES slide forward with each step, so
- * own-body collisions are evaluated dynamically — at ray offset m the
- * segment originally at path[i] has vacated iff i > n-1-m. As a result
- * the head can pass through where the tail used to be (the tail moves
- * out of the way), but it WILL block on bent body segments that would
- * still be occupying the target when the head arrives — producing the
- * same shake+thud as being blocked by another arrow. Off-grid head
- * positions are fine — the head pokes out of the puzzle shape.
+ * own-body collisions are evaluated dynamically — at the moment the head
+ * tries to enter offset k (i.e. transition k-1 → k), the segment that
+ * STARTED at path[i] occupies path[i-(k-1)] for i ≥ k-1 and the head
+ * extension for i < k-1. The pre-step body therefore covers path[0..n-k],
+ * so the new head cell collides iff it coincides with path[i] for some
+ * i ∈ [0, n-k]. Producing the same shake+thud as being blocked by another
+ * arrow. Off-grid head positions are fine — the head pokes out of the
+ * puzzle shape.
+ *
+ * Tail-follow is INTENTIONALLY rejected — the player otherwise sees the
+ * head visually pass through the cell the tail is "just leaving", which
+ * reads as the arrow eating its own bent body. A small set of original
+ * APK levels relied on this; they're filtered out of the shipped packs by
+ * `packages/tools/src/filter-self-ray-arrows.mjs`.
  * The head ALSO freely crosses "void" cells (in-grid cells inside the
  * bounding rectangle that aren't in any arrow's path); this is verified
  * empirically by `packages/tools/src/analyze-head-void.mjs` — out of a
@@ -213,10 +220,11 @@ export function tryPull(state: GameState, arrowId: number): PullResult {
   }
 
   // Own-body lookup: for each path cell index i in [1, n-1], record its key.
-  // At step ray offset m, the segment originally at path[i] is still part of
-  // the body iff i <= n-1-m (it slides forward by one cell per step). So a
-  // self-collision occurs iff the new head cell coincides with path[i] for
-  // some i in [1, n-1-m].
+  // Just before transitioning to offset k, this arrow's body covers
+  // path[0..n-k] (segment k-1 at path[0] via extension, segments k..n-1
+  // along the bent path). So a self-collision occurs iff the new head cell
+  // coincides with path[i] for some i in [1, n-k]. NB: the n-k cell is the
+  // current TAIL — tail-follow is rejected on purpose.
   const ownPathIndex = new Map<string, number>();
   for (let i = 1; i < n; i++) {
     const c = path[i]!;
@@ -236,7 +244,7 @@ export function tryPull(state: GameState, arrowId: number): PullResult {
       const key = cellKey(hx, hy);
       if (obstacles.has(key)) break;
       const ownIdx = ownPathIndex.get(key);
-      if (ownIdx !== undefined && ownIdx <= n - 1 - k) break;
+      if (ownIdx !== undefined && ownIdx <= n - k) break;
     }
     steps++;
 

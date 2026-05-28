@@ -341,18 +341,14 @@ function isHintActive(): boolean {
 interface Tween {
   from: number;
   to: number;
+  /** When set, animate from → bounceTo → from (forward push, recoil) to
+   *  visualize a blocked pull. The body's logical progress is unchanged. */
+  bounceTo?: number;
   start: number;
   dur: number;
   escapedAtEnd: boolean;
 }
-interface Shake {
-  start: number;
-  dur: number;
-  ax: number;
-  ay: number;
-}
 const tweens = new Map<number, Tween>();
-const shakes = new Map<number, Shake>();
 let rafId = 0;
 
 function easeOutCubic(u: number): number {
@@ -360,6 +356,10 @@ function easeOutCubic(u: number): number {
 }
 function evalTween(tw: Tween, now: number): number {
   const u = Math.min(1, Math.max(0, (now - tw.start) / tw.dur));
+  if (tw.bounceTo !== undefined) {
+    const v = u < 0.5 ? u * 2 : (1 - u) * 2;
+    return tw.from + (tw.bounceTo - tw.from) * easeOutCubic(v);
+  }
   return tw.from + (tw.to - tw.from) * easeOutCubic(u);
 }
 function startTween(id: number, before: number, after: number, escapedAtEnd: boolean): void {
@@ -371,21 +371,16 @@ function startTween(id: number, before: number, after: number, escapedAtEnd: boo
   tweens.set(id, { from: fromNow, to: after, start: now, dur, escapedAtEnd });
   ensureRAF();
 }
-function startShake(id: number, facing: { x: number; y: number }): void {
-  shakes.set(id, {
+function startBounce(id: number, from: number, bump: number): void {
+  tweens.set(id, {
+    from,
+    to: from,
+    bounceTo: from + bump,
     start: performance.now(),
-    dur: 220,
-    ax: facing.x,
-    ay: facing.y,
+    dur: 280,
+    escapedAtEnd: false,
   });
   ensureRAF();
-}
-function evalShake(sh: Shake, now: number, cell: number): { dx: number; dy: number } | null {
-  const u = (now - sh.start) / sh.dur;
-  if (u >= 1) return null;
-  const amp = cell * 0.22 * (1 - u);
-  const w = Math.sin(u * Math.PI * 5);
-  return { dx: sh.ax * amp * w, dy: sh.ay * amp * w };
 }
 function ensureRAF(): void {
   if (rafId) return;
@@ -394,7 +389,6 @@ function ensureRAF(): void {
     render();
     if (
       tweens.size > 0 ||
-      shakes.size > 0 ||
       isWinAnimating() ||
       loadingKey != null ||
       modal !== "none" ||
@@ -413,7 +407,6 @@ function isAnimating(): boolean {
 }
 function clearAnimations(): void {
   tweens.clear();
-  shakes.clear();
 }
 
 // --- audio ----------------------------------------------------------------
@@ -601,15 +594,6 @@ function render(): void {
         drawEscapedIds.add(id);
       }
     }
-    const shakeOffsets = new Map<number, { dx: number; dy: number }>();
-    for (const [id, sh] of shakes) {
-      const off = evalShake(sh, now, view2.cell);
-      if (!off) {
-        shakes.delete(id);
-        continue;
-      }
-      shakeOffsets.set(id, off);
-    }
     let highlightArrowId: number | null = null;
     let highlightPulse = 1;
     if (isHintActive()) {
@@ -622,7 +606,6 @@ function render(): void {
     drawGame(ctx as any, game, view2, {
       showPaths: false,
       progressOverride,
-      shakeOffsets,
       drawEscapedIds,
       highlightArrowId,
       highlightPulse,
@@ -1234,7 +1217,15 @@ wx.onTouchStart((e: WxTouchEvent) => {
       synth.whoosh(r.steps);
     }
   } else {
-    startShake(arrow.id, arrow.data.facing);
+    // Blocked. Spend a life, then bounce-back to make the rejection
+    // legible. Out-of-lives funnels into the no-lives modal (same as reset).
+    if (!tryConsumeLife()) {
+      modal = "noLives";
+      ensureRAF();
+      render();
+      return;
+    }
+    startBounce(arrow.id, before, 0.55);
     synth.thud();
     vibrate();
   }

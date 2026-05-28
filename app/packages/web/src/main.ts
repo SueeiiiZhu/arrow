@@ -46,19 +46,15 @@ import {
 interface Tween {
   from: number;
   to: number;
+  /** If set, animate from → bounceTo → from over `dur` (half time each leg)
+   *  instead of from → to. Used to visualize a blocked pull: the arrow
+   *  pushes forward, hits, then springs back. */
+  bounceTo?: number;
   start: number;
   dur: number;
   escapedAtEnd: boolean;
 }
-interface Shake {
-  start: number;
-  dur: number;
-  ax: number;
-  ay: number;
-}
-
 const tweens = new Map<number, Tween>();
-const shakes = new Map<number, Shake>();
 let rafId = 0;
 
 function easeOutCubic(u: number): number {
@@ -67,6 +63,13 @@ function easeOutCubic(u: number): number {
 
 function evalTween(tw: Tween, now: number): number {
   const u = Math.min(1, Math.max(0, (now - tw.start) / tw.dur));
+  if (tw.bounceTo !== undefined) {
+    // Forward leg [0, 0.5] eases out toward bounceTo; return leg [0.5, 1]
+    // eases back to from. Same eased curve on both sides reads as "soft
+    // push, hit, recoil".
+    const v = u < 0.5 ? u * 2 : (1 - u) * 2;
+    return tw.from + (tw.bounceTo - tw.from) * easeOutCubic(v);
+  }
   return tw.from + (tw.to - tw.from) * easeOutCubic(u);
 }
 
@@ -80,22 +83,18 @@ function startTween(id: number, before: number, after: number, escapedAtEnd: boo
   ensureRAF();
 }
 
-function startShake(id: number, facing: { x: number; y: number }): void {
-  shakes.set(id, {
+/** Visual feedback for a blocked pull: arrow advances `bump` cells, hits,
+ *  then springs back to `from`. The body's logical progress doesn't change. */
+function startBounce(id: number, from: number, bump: number): void {
+  tweens.set(id, {
+    from,
+    to: from,
+    bounceTo: from + bump,
     start: performance.now(),
-    dur: 220,
-    ax: facing.x,
-    ay: facing.y,
+    dur: 280,
+    escapedAtEnd: false,
   });
   ensureRAF();
-}
-
-function evalShake(sh: Shake, now: number, cell: number): { dx: number; dy: number } | null {
-  const u = (now - sh.start) / sh.dur;
-  if (u >= 1) return null;
-  const amp = cell * 0.22 * (1 - u);
-  const w = Math.sin(u * Math.PI * 5);
-  return { dx: sh.ax * amp * w, dy: sh.ay * amp * w };
 }
 
 function ensureRAF(): void {
@@ -103,7 +102,7 @@ function ensureRAF(): void {
   const step = (): void => {
     rafId = 0;
     render();
-    if (tweens.size > 0 || shakes.size > 0 || isWinAnimating() || isHintActive()) {
+    if (tweens.size > 0 || isWinAnimating() || isHintActive()) {
       rafId = requestAnimationFrame(step);
     } else if (hintArrowId != null) {
       // Hint timed out — clear and repaint once without the halo.
@@ -124,7 +123,6 @@ function isWinAnimating(): boolean {
 
 function clearAnimations(): void {
   tweens.clear();
-  shakes.clear();
 }
 
 // --- audio synthesis ---------------------------------------------------------
@@ -360,16 +358,6 @@ function render(): void {
       drawEscapedIds.add(id);
     }
   }
-  const shakeOffsets = new Map<number, { dx: number; dy: number }>();
-  for (const [id, sh] of shakes) {
-    const off = evalShake(sh, now, t.cell);
-    if (!off) {
-      shakes.delete(id);
-      continue;
-    }
-    shakeOffsets.set(id, off);
-  }
-
   let highlightArrowId: number | null = null;
   let highlightPulse = 1;
   if (isHintActive()) {
@@ -384,7 +372,6 @@ function render(): void {
   drawGame(ctx as any, game, t, {
     showPaths: showPathsBox.checked,
     progressOverride,
-    shakeOffsets,
     drawEscapedIds,
     highlightArrowId,
     highlightPulse,
@@ -509,7 +496,14 @@ function handlePointer(clientX: number, clientY: number): void {
     if (result.escaped) synth.escape();
     else synth.whoosh(result.steps);
   } else {
-    startShake(arrow.id, arrow.data.facing);
+    // Blocked. Charge a life and play a bounce-back to make the rejection
+    // legible; if the player is already out of lives, skip the bounce and
+    // surface the regen dialog (same flow as the reset button).
+    if (!tryConsumeLife()) {
+      openNoLivesDialog();
+      return;
+    }
+    startBounce(arrow.id, before, 0.55);
     synth.thud();
   }
   if (result.won && currentKey) {

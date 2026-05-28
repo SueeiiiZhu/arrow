@@ -48,13 +48,47 @@ export function encodeLevel(raw) {
   return [W, H, arrows];
 }
 
-/** Read all neutral levels from disk, sorted by filename. */
+/**
+ * True if any of `raw`'s arrows has a path cell sitting on the head's
+ * facing ray — under the (post-2026-05-28 tightened) `tryPull` rule such
+ * an arrow can self-block in a way that reads, visually, as the head
+ * eating its own bent body. We drop those levels from shipped packs.
+ */
+function levelHasSelfRayArrow(raw) {
+  const W = raw.width;
+  const H = raw.height;
+  const maxJ = W + H;
+  for (const a of raw.arrows) {
+    const head = a.path[0];
+    const [fx, fy] = a.facing;
+    const ray = new Set();
+    for (let j = 1; j <= maxJ; j++) {
+      ray.add(`${head[0] + j * fx},${head[1] + j * fy}`);
+    }
+    for (let i = 1; i < a.path.length; i++) {
+      const c = a.path[i];
+      if (ray.has(`${c[0]},${c[1]}`)) return true;
+    }
+  }
+  return false;
+}
+
+/** Read all neutral levels from disk, sorted by filename. Skips levels
+ *  whose tightened-engine semantic would let the head self-block visibly. */
 export async function readAllLevels() {
   const files = (await readdir(LEVELS_DIR)).filter((f) => f.endsWith(".json")).sort();
   const out = [];
+  let skipped = 0;
   for (const f of files) {
     const raw = JSON.parse(await readFile(resolve(LEVELS_DIR, f), "utf8"));
+    if (levelHasSelfRayArrow(raw)) {
+      skipped++;
+      continue;
+    }
     out.push({ key: f, encoded: encodeLevel(raw) });
+  }
+  if (skipped > 0) {
+    console.warn(`[_encode] skipped ${skipped} self-ray level(s); see filter rationale in game.ts`);
   }
   return out;
 }
