@@ -1,6 +1,8 @@
 # Escape Arrows — Handoff / TODO
 
-> Last advanced 2026-05-25 (玩家体验三件套：撤销按钮 + 提示按钮 + GH Pages 自动部署。`@ea/core` 新增 `snapshotGame` / `restoreGame` (`packages/core/src/game.ts`) 与 `solver.ts`（贪心 + DFS fallback，2 s deadline，移植自 `packages/tools/src/_solver.mjs`，从此 hint 不再依赖 `@ea/tools`）；renderer 增加 `highlightArrowId` + `highlightPulse` 双描边 halo（不依赖 `shadowBlur`，wxgame 安全）；web 头部多两个按钮（`Z` / `H` 快捷键），wxgame HUD 从 56 px 扩到 80 px，分两行：上面信息条，下面 5 个按钮（prev / hint / reset / undo / next）。撤销栈固定 20 步、按 `playing → won` 状态过滤的轻量快照（只存 `arrows[i].progress/escaped + status`）。GH Pages workflow：`push main → build:web (BASE_PATH=/arrow/) → actions/deploy-pages@v4`，构件直接挂在子路径 `/arrow/`。仓库 Settings → Pages → Source = GitHub Actions 这一步要手动开。)
+> Last advanced 2026-05-28 (备案合规改造 + wxgame 启动体验。游戏改名「箭路脱困」（H5 title / dev playground title 同步）。wxgame 顶部 HUD 从 80 px 扩到 `safeTop + 96 px`，`safeTop` 由 `wx.getMenuButtonBoundingClientRect()` 推出（不可用时 fallback `statusBarHeight + 7 + 32 + 4`），不再被官方胶囊（×, ...）盖住；信息条拆两行：行 1 关卡名 / 心 / 状态，行 2 `💡N 🪙N` + ⚙ 齿轮 → 设置面板。冷启动加 splash 页（`screen = "splash" | "game"`）：标题 + 健康游戏忠告 4 条 + 适龄提示 8+ + 「开始游戏」按钮，备案首图直接截这一屏。每关加载慢的根因是 `selectLevelByIndex` 永远走 Promise 队列：新增 `tryResolveLevelSync` 同步快路径（主包 + 已缓存 pack 直接 build，无 "加载中…" 闪屏）+ `prefetchUpcomingPack` 提前 1–4 关在后台 `wx.loadSubpackage`；bootstrap 也预热 resume 目标所在 pack。`@ea/core` `Progress` 接口扩展：`hints`（默认 3，提示一次扣一次，看广告补 +3）/ `coins`（首通关 +1，看广告 +5）/ `settings.sfx` / `settings.vibrate`，全部进 wx storage 同一 key。设置面板：音效开关绑 `synth.muted`；震动开关通过 `vibrate()` 闸门控 `wx.vibrateShort?.({ type: "light" })`，每次成功拉动 / 失败 thud / 通关都会震一下。看广告（`wx.createRewardedVideoAd`，devtool / 无 ad unit id 时 fallback 直接发奖以便流程可演示，`REWARDED_AD_UNIT_ID` 是空串，上线前要改）。Modal 状态统一收成 `Modal = "none" | "noLives" | "noHints" | "settings"`，互斥渲染。)
+>
+> Previously 2026-05-25 (玩家体验三件套：撤销按钮 + 提示按钮 + GH Pages 自动部署。`@ea/core` 新增 `snapshotGame` / `restoreGame` (`packages/core/src/game.ts`) 与 `solver.ts`（贪心 + DFS fallback，2 s deadline，移植自 `packages/tools/src/_solver.mjs`，从此 hint 不再依赖 `@ea/tools`）；renderer 增加 `highlightArrowId` + `highlightPulse` 双描边 halo（不依赖 `shadowBlur`，wxgame 安全）；web 头部多两个按钮（`Z` / `H` 快捷键），wxgame HUD 从 56 px 扩到 80 px，分两行：上面信息条，下面 5 个按钮（prev / hint / reset / undo / next）。撤销栈固定 20 步、按 `playing → won` 状态过滤的轻量快照（只存 `arrows[i].progress/escaped + status`）。GH Pages workflow：`push main → build:web (BASE_PATH=/arrow/) → actions/deploy-pages@v4`，构件直接挂在子路径 `/arrow/`。仓库 Settings → Pages → Source = GitHub Actions 这一步要手动开。)
 >
 > Previously 2026-05-22 (partition v2 perf + path-len tuning. (a) Profiler revealed the 31×38 slowness was **not** Kahn/backtracking but the post-construction `deadlockRate` filter dominating ~99 % of wall time — defaults loosened to `--max-deadlock-rate=0.30 --rollout-trials=30`; 25×31 from ~29 s/candidate to seconds, 31×38 from minute/candidate to ~5 min total for count=3. (b) `--max-arrow-len` default 12 → 18 — 25×31 quality jumped: arrows 98 → 78 (corpus 67), chainDepth 9 → 10 (matches corpus), bottleneck 19 % → 22 %, path-len p50 7 → 8 (matches). Tighten / loosen back via flags if needed.) Previously (2026-05-21): partition-first **v2 landed** — v1 primitive + targeted SCC-core geometric backtracking. The 25×31 cliff resolved — yield went from 1/3 at `--target-fill=0.7` (v1) to 5/5 at `--target-fill=0.85` (v2). v2 matches or beats corpus on structural metrics at 10×10 through 25×31. dev-playground sample batch also written for blind playtesting. Next session, start the dev server first (`pnpm dev:web`, browser to `http://localhost:5173`; if the port is taken Vite falls through to 5174…) and pick from this document.
 
@@ -60,6 +62,33 @@
 
 ---
 
+## 备案合规对照表（2026-05-28 快照）
+
+参考清单：`/Users/xi/Downloads/微信小游戏备案认证填写清单.md`（boostvision · 箭路脱困 · 休闲益智 · IAA · 8+）。
+
+| 清单要求 | 代码侧状态 | 还需手动操作 |
+| --- | --- | --- |
+| 游戏名称「箭路脱困」 | ✅ H5 title / dev playground title 改名 | 在 MP 后台「基本设置 → 名称」改为「箭路脱困」 |
+| 启动页 / 备案首图（健康忠告 + 适龄提示 + 游戏名） | ✅ wxgame splash 已实现 | 真机运行后截图 1080×1920，作为备案首图上传 |
+| 货币系统 | ✅ `Progress.coins`（通关 +1 / 广告 +5），HUD 显示 `🪙N` | — |
+| 提示系统（限量 + 看广告补） | ✅ 默认 3 次，扣减条件「求解成功」，广告 +3 + 附赠 5 金币 | — |
+| 关卡系统 | ✅ 3548 关，含进度持久化、难度桶 shuffle、撤销、提示 | — |
+| 设置系统（音效 / 震动 / 即时存档） | ✅ 齿轮 → 设置面板，全部立即 `persist()` | — |
+| 广告系统（激励视频） | ✅ `showRewardedAd()` 已封装 fallback | **上线前替换 `REWARDED_AD_UNIT_ID`**（在 `packages/wxgame/src/main.ts` 顶部，目前是空串），unit id 在 MP 后台「流量主 → 广告位」申请 |
+| 适龄提示 8+ | ✅ splash 文案已写 8 岁 | MP 后台「基本设置 → 适龄提示」选 8+ |
+| 健康游戏忠告 8 句（4 行 ×2） | ✅ splash 4 行 16 字版（与小程序通用版一致） | — |
+| 自审报告 / 法律声明 | ⛔ 不在代码侧 | 备案模板填写、上传 |
+| 隐私保护指引 | ⛔ 不在代码侧 | MP 后台填写 |
+
+### 上线前手工 checklist
+
+1. **`REWARDED_AD_UNIT_ID`** — `packages/wxgame/src/main.ts:467`，换成 MP 流量主里申请到的真实 unit id。
+2. **MP 后台**：游戏名「箭路脱困」、适龄提示选 8+、类目「休闲益智」、变现「广告」、绑流量主。
+3. **备案首图**：DevTools 真机预览开 splash → 截屏。
+4. **GitHub Pages 启用**：仓库 Settings → Pages → Source = "GitHub Actions"（GH Pages 发布工作流需要这一步才会真正发布；2026-05-25 已上线）。
+5. **真机回归**：splash → 开始 → 拉箭头 / 撤销 / 提示 / 跨 pack 切关 / 心耗光弹窗 / 提示耗光弹窗 / 看广告 fallback / 设置面板音效与震动 toggle。
+6. （可选）BGM 备案清单上写「无」，所以暂不接入。后续接入要补 MP 备案。
+
 ## Outstanding work — by priority
 
 ### P3 — engineering hygiene
@@ -86,6 +115,15 @@
     3. **path-len p90 18 vs corpus 27**：把 `--max-arrow-len` 默认值从 12 调到 18 后，25×31 上 p50 已对齐（8 vs 8）；2026-05-22 上线长尾 mixture 后 p90 16 → 18，向 corpus 又靠近 2 格。仍然差 9 格的根因是 corpus 偶尔出现 40+ 长度的蛇型箭头，且占比可能更高。想继续抬要么调大 `--long-tail-max`（>40 时几乎抽不到，因为 self-avoid 随机游走在窄棋盘上很难走那么长），要么提升 `--long-tail-frac`，但后者会回吐 chainDepth（见上）。当前 sweet spot 是 maxLen=18 + longTailFrac=0.15 + longTailMax=40。
 - **不要把生成关接进正式 picker / `levels_data/`** —— legal boundary 没变。样本扔进 dev-playground 让人主观盲测打分即可。
 - **关卡顺序按难度桶 shuffle 已上线** — `packages/core/src/order.ts` (`shuffleByDifficulty` + `ensureShuffleSeed`)，每个用户首次启动写一次 32-bit 种子进 `ProgressData.shuffleSeed`，5 个 quantile 桶按 `[WxH]` 面积排序、桶内 Fisher-Yates。Web + wxgame 入口都接好了。开放问题列表里的「关卡顺序是否要打乱」选项 1 已闭合。
+- **备案合规改造已上线（2026-05-28）** — 对照 `/Users/xi/Downloads/微信小游戏备案认证填写清单.md` 的清单做了 7 项改造：
+    1. 游戏名统一为「箭路脱困」（`packages/web/index.html` / `packages/web/dev-playground.html` 的 `<title>`）。wxgame 主体名在 MP 后台配置，game.json 不带 name 字段。
+    2. **启动页（备案首图）**：wxgame 冷启动进入 `screen = "splash"`，画标题 + `HEALTH_ADVISORY_LINES`（4 条 8 字健康游戏忠告） + `AGE_NOTICE`（"适龄提示：本游戏适合 8 岁以上用户使用"）+ 开始按钮。提交备案时直接截这一屏作为首图。
+    3. **顶部安全区**：`computeSafeTop()` 调 `wx.getMenuButtonBoundingClientRect()`，HUD 整体下沉到胶囊底部 + 4 px；fallback 用 `statusBarHeight + 7 + 32 + 4`。
+    4. **设置系统**：齿轮入口（HUD row2 右侧）→ 设置面板，开关音效（绑 `synth.muted`）+ 震动反馈（绑 `vibrate()` 闸门）。两者均持久化到 `Progress.settings`。即时存档：所有状态变化都立刻 `persist()`，无需手动保存。
+    5. **货币系统（最小可用）**：`Progress.coins`；首通关 +1，看激励视频广告 +5；目前只记账无消耗入口（未来接道具/换装时再放）。
+    6. **提示限量 + 广告兑换**：`Progress.hints` 默认 3，每次提示求解成功才扣 1 次；耗尽弹 `noHints` modal → 看广告 +3 提示且附赠 +5 金币。
+    7. **广告系统**：`showRewardedAd(onReward)` 统一封装 `wx.createRewardedVideoAd`；devtools / 空 `REWARDED_AD_UNIT_ID` 时 fallback 直接发奖（保流程可演示）。上线前必须把 `REWARDED_AD_UNIT_ID`（`packages/wxgame/src/main.ts` 顶部）替换为 MP 后台流量主里申请的真实 unit id。
+- **wxgame 加载性能优化已上线（2026-05-28）** — 修复"每关都要等"。`selectLevelByIndex` 之前永远走 promise 队列，哪怕主包关 / 已缓存 pack 也会 setTimeout 一帧；现在加了 `tryResolveLevelSync` 同步快路径（命中后立刻 build game 并 render，没有 "加载关卡…" 闪屏）+ `prefetchUpcomingPack(fromIdx)` 后台预拉 1–4 关里第一个未缓存 pack（idempotent，靠 `packCache` + `inflight` coalesce）。Bootstrap 也预热 resume 目标所在 pack + 下一 pack。
 - **撤销 + 提示已上线（2026-05-25）** — `@ea/core` 新增 `snapshotGame` / `restoreGame`（只克隆 `arrows[i].progress/escaped + status`，不复制 `path` 引用，便宜得几乎免费）。撤销栈在 `web/src/main.ts` 和 `wxgame/src/main.ts` 各自维护，固定 cap 20 步、`tryPull` 实际产生步数后才入栈；选关 / reset 清栈。提示按钮调 `findNextMove(state, Date.now()+2000)`：先在快照上跑贪心，赢就用首步；贪心卡死再 DFS 兜底（state-hash + 2 s deadline）。求解会同步阻塞主线程，web 用 `requestAnimationFrame` 延一帧再调，wxgame 用 `setTimeout(30)` 延一帧，先把 "思考中" 高亮画上去再求解。提示命中后箭头描金色双描边 halo + 2.5 s 内淡出 + 轻微脉冲（`packages/renderer/src/board.ts` 里加了 `highlightArrowId` 和 `highlightPulse` 两个 DrawOption；不用 `shadowBlur`，wxgame canvas 不可靠）。
 - **GitHub Pages 自动部署已上线（2026-05-25）** — `.github/workflows/deploy-pages.yml` 在 push 到 main 时跑 `BASE_PATH=/arrow/ pnpm build:web`，上传 `packages/web/dist/` 到 `actions/deploy-pages@v4`。Vite `base` 仅在 `command === "build"` 时生效，本地 dev 仍是 `/`。需要在仓库 Settings → Pages → Source 选 "GitHub Actions" 才会真正发布。Demo URL 形如 `https://<owner>.github.io/arrow/`。
 
