@@ -243,15 +243,59 @@ function prefetchUpcomingPack(fromIdx: number): void {
 // below the platform capsule (×, ...) which the WeChat host renders on
 // top-right of every wxgame canvas.
 //
-// Info section is two stacked rows:
-//   Row 1 (28 px): level idx/name | hearts | status/loading text
-//   Row 2 (44 px): 💡N 🪙N counters | gear ⚙ → settings modal
-// Then a 24-px button row: prev / hint / reset / undo / next.
+// Info section is two stacked rows on a strict grid — every item is
+// anchored to LEFT, CENTER, or RIGHT so the long level name and the heart
+// row can never collide regardless of screen width:
+//
+//   Row 1 (38 px): [LV n / total] pill (LEFT)        hearts ❤×N + timer (RIGHT)
+//   Row 2 (30 px): 💡N 🪙N counters (LEFT) | 剩余 N/M status (CENTER) | ⚙ (RIGHT)
+//
+// Then a 28-px button row: prev / hint / reset / undo / next.
 const HUD_H = 96;
-const HUD_INFO_H = 72;
+const HUD_INFO_ROW1_H = 38;
+const HUD_INFO_ROW2_H = 30;
+const HUD_INFO_H = HUD_INFO_ROW1_H + HUD_INFO_ROW2_H;
 const HUD_BTN_H = HUD_H - HUD_INFO_H;
-const HUD_INFO_ROW1_H = 28;
-const HUD_INFO_ROW2_H = HUD_INFO_H - HUD_INFO_ROW1_H;
+
+// --- UI palette ----------------------------------------------------------
+// "Editorial Bauhaus" — cool dark chrome with warm-gold accents, coral
+// hearts, mint-green win state. Tighter contrast than the original generic
+// slate-blue HUD; clear hierarchy primaries / secondaries / accents.
+const UI = {
+  hudBg: "#0c111c",
+  hudHairline: "#1a2238",
+  ruleAccent: "rgba(230, 184, 92, 0.30)",
+  chipBg: "#161e2e",
+  chipBorder: "#252e45",
+  textPrimary: "#e8e1d2",
+  textSecondary: "#7e8093",
+  textGold: "#e6b85c",
+  heartFill: "#fb6e51",
+  heartEmpty: "#3a4257",
+  statusWon: "#7ee3a1",
+  hintGold: "#e6b85c",
+  coinGold: "#ffd879",
+  btnText: "#e8e1d2",
+  btnTextDisabled: "#3a4257",
+  btnDivider: "#1a2238",
+  btnHintActiveBg: "#2a1f0e",
+  btnHintActiveText: "#e6b85c",
+  gear: "#9aa0b3",
+  modalBackdrop: "rgba(8, 11, 18, 0.84)",
+  modalCardBg: "#15131a",
+  modalCardBorder: "#2c2530",
+  modalTitle: "#f4ecdc",
+  modalBody: "#9c9099",
+  modalAccent: "#e6b85c",
+  ctaPrimaryBg: "#fb6e51",
+  ctaPrimaryText: "#15131a",
+  ctaSecondaryBorder: "#3a3340",
+  ctaSecondaryText: "#9c9099",
+  switchOn: "#e6b85c",
+  switchOff: "#3a4257",
+  switchKnob: "#f4ecdc",
+  fontDisplayCJK: '"PingFang SC", "Helvetica Neue", -apple-system, sans-serif',
+};
 
 // Reserve vertical space for the platform-rendered capsule (×, ...) at the
 // top-right of every wxgame canvas. `getMenuButtonBoundingClientRect` is
@@ -632,7 +676,7 @@ function drawGearIcon(cx: number, cy: number, r: number): void {
   const teeth = 8;
   const innerR = r * 0.7;
   const tipR = r;
-  ctx.fillStyle = "#94a3b8";
+  ctx.fillStyle = UI.gear;
   ctx.beginPath();
   for (let i = 0; i < teeth * 2; i++) {
     const a = (i / (teeth * 2)) * Math.PI * 2;
@@ -644,11 +688,27 @@ function drawGearIcon(cx: number, cy: number, r: number): void {
   }
   ctx.closePath();
   ctx.fill();
-  // Center hole.
-  ctx.fillStyle = "#0f172a";
+  // Center hole — punched through to HUD background.
+  ctx.fillStyle = UI.hudBg;
   ctx.beginPath();
   ctx.arc(cx, cy, r * 0.32, 0, Math.PI * 2);
   ctx.fill();
+}
+
+// Rounded-rect path on the active context; caller picks fill/stroke.
+function roundRectPath(x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.arc(x + w - rr, y + rr, rr, -Math.PI / 2, 0);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.arc(x + w - rr, y + h - rr, rr, 0, Math.PI / 2);
+  ctx.lineTo(x + rr, y + h);
+  ctx.arc(x + rr, y + h - rr, rr, Math.PI / 2, Math.PI);
+  ctx.lineTo(x, y + rr);
+  ctx.arc(x + rr, y + rr, rr, Math.PI, -Math.PI / 2);
+  ctx.closePath();
 }
 
 function drawHeart(cx: number, cy: number, r: number, filled: boolean): void {
@@ -670,132 +730,209 @@ function drawHeart(cx: number, cy: number, r: number, filled: boolean): void {
   }
 }
 
-function drawHearts(centerX: number, centerY: number): void {
+function drawHeartsRight(rightX: number, midY: number): void {
   tickLives();
   const { lives } = getLivesState();
   const { max } = getLivesConfig();
-  const r = 9;
-  const gap = 4;
+  const r = 8;
+  const gap = 5;
   const slotW = r * 2 + gap;
   const totalW = max * slotW - gap;
-  const startX = centerX - totalW / 2;
+  const ms = nextRegenMs();
+
+  let timerW = 0;
+  if (ms != null) {
+    ctx.font = `bold 11px ${UI.fontDisplayCJK}`;
+    timerW = ctx.measureText(formatMs(ms)).width + 8;
+  }
+  const heartsRightX = rightX - timerW;
+  const heartsLeftX = heartsRightX - totalW;
   for (let i = 0; i < max; i++) {
-    const x = startX + i * slotW + r;
+    const cx = heartsLeftX + i * slotW + r;
     if (i < lives) {
-      ctx.fillStyle = "#ef4444";
-      drawHeart(x, centerY, r, true);
+      ctx.fillStyle = UI.heartFill;
+      drawHeart(cx, midY, r, true);
     } else {
-      ctx.strokeStyle = "#475569";
-      ctx.lineWidth = 1.5;
-      drawHeart(x, centerY, r, false);
+      ctx.strokeStyle = UI.heartEmpty;
+      ctx.lineWidth = 1.4;
+      drawHeart(cx, midY, r, false);
     }
   }
-  const ms = nextRegenMs();
   if (ms != null) {
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = "11px sans-serif";
-    ctx.textAlign = "left";
+    ctx.fillStyle = UI.textSecondary;
+    ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    ctx.fillText(formatMs(ms), startX + totalW + 6, centerY + 1);
+    ctx.font = `bold 11px ${UI.fontDisplayCJK}`;
+    ctx.fillText(formatMs(ms), rightX, midY + 1);
   }
+}
+
+function drawLevelPill(leftX: number, midY: number): void {
+  const h = 30;
+  const r = h / 2;
+  const y = midY - h / 2;
+  // Pre-measure text to size pill to content + padding.
+  const idx = `${levelIndex + 1}`;
+  const tot = `/ ${ORDERED_KEYS.length}`;
+  ctx.font = `bold 16px ${UI.fontDisplayCJK}`;
+  const idxW = ctx.measureText(idx).width;
+  ctx.font = `12px ${UI.fontDisplayCJK}`;
+  const totW = ctx.measureText(tot).width;
+  const lvCapsW = 22;
+  const padL = 14;
+  const padR = 14;
+  const innerGap = 6;
+  const w = padL + lvCapsW + innerGap + idxW + 4 + totW + padR;
+
+  // Body fill + subtle border.
+  roundRectPath(leftX, y, w, h, r);
+  ctx.fillStyle = UI.chipBg;
+  ctx.fill();
+  ctx.strokeStyle = UI.chipBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Gold accent stripe on the left edge (3px tall band inside the pill).
+  ctx.fillStyle = UI.textGold;
+  ctx.fillRect(leftX + 4, y + 7, 3, h - 14);
+
+  // "LV" small caps in gold.
+  ctx.fillStyle = UI.textGold;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold 10px ${UI.fontDisplayCJK}`;
+  ctx.fillText("LV", leftX + padL, midY - 1);
+
+  // Current level number in bold cream.
+  ctx.fillStyle = UI.textPrimary;
+  ctx.font = `bold 16px ${UI.fontDisplayCJK}`;
+  ctx.fillText(idx, leftX + padL + lvCapsW + innerGap, midY);
+
+  // Total in muted grey.
+  ctx.fillStyle = UI.textSecondary;
+  ctx.font = `12px ${UI.fontDisplayCJK}`;
+  ctx.fillText(tot, leftX + padL + lvCapsW + innerGap + idxW + 4, midY + 1);
 }
 
 type HudButton = "prev" | "hint" | "reset" | "undo" | "next";
 const HUD_BUTTON_ORDER: HudButton[] = ["prev", "hint", "reset", "undo", "next"];
 const HUD_BUTTON_LABEL: Record<HudButton, string> = {
   prev: "‹ 上一",
-  hint: "💡 提示",
-  reset: "↻ 重开",
-  undo: "↶ 撤销",
+  hint: "提示",
+  reset: "重开",
+  undo: "撤销",
   next: "下一 ›",
 };
 
 function drawHud(): void {
-  // Capsule reserve + info section (drawn as one continuous dark band so
-  // the platform capsule on top reads as part of the bar).
-  ctx.fillStyle = "#0f172a";
-  ctx.fillRect(0, 0, cssW, btnTopY);
+  // 1) Single dark band across the full HUD chrome — including the area
+  //    behind the platform capsule (×, ...) so the capsule reads as part
+  //    of the bar instead of floating on top of the board.
+  ctx.fillStyle = UI.hudBg;
+  ctx.fillRect(0, 0, cssW, hudBottom);
 
-  // Row 1: level idx / name (left) | hearts (center) | status (right)
-  ctx.fillStyle = "#e2e8f0";
-  ctx.font = "14px sans-serif";
-  ctx.textAlign = "left";
+  // 2) Hairline right below the safe-top — separates platform capsule from
+  //    the in-game HUD content visually.
+  ctx.strokeStyle = UI.hudHairline;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, safeTop + 0.5);
+  ctx.lineTo(cssW, safeTop + 0.5);
+  ctx.stroke();
+
+  // 3) Row 1 — level pill (LEFT) + hearts row (RIGHT). Both anchored to
+  //    opposite edges so they never collide on narrow screens.
+  drawLevelPill(12, row1MidY);
+  drawHeartsRight(cssW - 12, row1MidY);
+
+  // 4) Row 2 — resource counters (LEFT) | status (CENTER) | gear (RIGHT).
+  //    Status is the only centred element; counters and gear are anchored
+  //    to the edges with hard padding so center never gets crowded.
   ctx.textBaseline = "middle";
-  const key = ORDERED_KEYS[levelIndex] ?? "";
-  const name = key.replace(/^\d+__/, "").replace(/\.json$/, "");
-  ctx.fillText(`${levelIndex + 1}/${ORDERED_KEYS.length}  ${name}`, 12, row1MidY);
+  ctx.textAlign = "left";
+  ctx.fillStyle = UI.hintGold;
+  ctx.font = `bold 12px ${UI.fontDisplayCJK}`;
+  const hintLabel = `💡 ${progress.hints}`;
+  ctx.fillText(hintLabel, 12, row2MidY);
+  const hintW = ctx.measureText(hintLabel).width;
+  ctx.fillStyle = UI.coinGold;
+  ctx.fillText(`🪙 ${progress.coins}`, 12 + hintW + 14, row2MidY);
 
-  drawHearts(cssW / 2, row1MidY);
-
+  ctx.textAlign = "center";
   if (game) {
     const remaining = game.arrows.filter((a) => !a.escaped).length;
-    ctx.textAlign = "right";
-    ctx.fillStyle = game.status === "won" ? "#22c55e" : "#e2e8f0";
-    ctx.font = "14px sans-serif";
-    ctx.fillText(
-      game.status === "won" ? "通关！" : `剩余 ${remaining}/${game.arrows.length}`,
-      cssW - 12,
-      row1MidY,
-    );
+    if (game.status === "won") {
+      ctx.fillStyle = UI.statusWon;
+      ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
+      ctx.fillText("通关 ✓", cssW / 2, row2MidY);
+    } else {
+      ctx.fillStyle = UI.textPrimary;
+      ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
+      ctx.fillText(`剩余 ${remaining}/${game.arrows.length}`, cssW / 2, row2MidY);
+    }
   } else if (loadingKey != null) {
-    ctx.textAlign = "right";
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = "14px sans-serif";
-    ctx.fillText("加载中...", cssW - 12, row1MidY);
+    ctx.fillStyle = UI.textSecondary;
+    ctx.font = `12px ${UI.fontDisplayCJK}`;
+    ctx.fillText("加载中…", cssW / 2, row2MidY);
   }
 
-  // Row 2: hint balance + coin balance (left) | gear icon (right)
-  ctx.fillStyle = "#fbbf24";
-  ctx.font = "13px sans-serif";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(`💡 ${progress.hints}`, 12, row2MidY);
-  ctx.fillStyle = "#fde047";
-  ctx.fillText(`🪙 ${progress.coins}`, 78, row2MidY);
+  const gearR = 11;
+  const gearCX = cssW - 12 - gearR;
+  drawGearIcon(gearCX, row2MidY, gearR);
+  gearHitbox = { x: gearCX - gearR - 4, y: row2MidY - gearR - 4, w: gearR * 2 + 8, h: gearR * 2 + 8 };
 
-  const gearSize = 36;
-  const gearX = cssW - gearSize - 8;
-  const gearY = row2TopY + (HUD_INFO_ROW2_H - gearSize) / 2;
-  drawGearIcon(gearX + gearSize / 2, gearY + gearSize / 2, 12);
-  gearHitbox = { x: gearX, y: gearY, w: gearSize, h: gearSize };
-
-  // Button row — 5 evenly-spaced labels with a thin separator above.
-  ctx.strokeStyle = "#1e293b";
+  // 5) Hairline above button row (cool slate), then accent gold rule at
+  //    the bottom of the HUD to visually separate chrome from the board.
+  ctx.strokeStyle = UI.hudHairline;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, btnTopY + 0.5);
   ctx.lineTo(cssW, btnTopY + 0.5);
   ctx.stroke();
 
+  // 6) Button row — ghost buttons; the only color is on the hint label
+  //    (gold) and on the active-hint state (warm dark backdrop). Vertical
+  //    hairlines are inset 4px top/bottom so the row reads as separators,
+  //    not as a grid.
   const btnW = cssW / 5;
-  ctx.font = "13px sans-serif";
+  ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (let i = 0; i < 5; i++) {
     const btn = HUD_BUTTON_ORDER[i]!;
     const enabled = isHudButtonEnabled(btn);
-    let bg = "#0f172a";
-    let fg = enabled ? "#e2e8f0" : "#475569";
+    const x = i * btnW;
+
     if (btn === "hint" && hintBusy) {
-      bg = "#7c2d12";
-      fg = "#fde047";
-    } else if (btn === "hint" && enabled) {
-      fg = "#fbbf24";
-    } else if (btn === "undo" && enabled) {
-      fg = "#cbd5e1";
+      ctx.fillStyle = UI.btnHintActiveBg;
+      ctx.fillRect(x, btnTopY + 1, btnW, HUD_BTN_H - 1);
     }
-    ctx.fillStyle = bg;
-    ctx.fillRect(i * btnW, btnTopY, btnW, HUD_BTN_H);
+
     if (i > 0) {
-      ctx.strokeStyle = "#1e293b";
+      ctx.strokeStyle = UI.btnDivider;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(i * btnW + 0.5, btnTopY);
-      ctx.lineTo(i * btnW + 0.5, hudBottom);
+      ctx.moveTo(x + 0.5, btnTopY + 6);
+      ctx.lineTo(x + 0.5, hudBottom - 6);
       ctx.stroke();
     }
+
+    let fg = UI.btnText;
+    if (!enabled) fg = UI.btnTextDisabled;
+    else if (btn === "hint" && hintBusy) fg = UI.btnHintActiveText;
+    else if (btn === "hint") fg = UI.textGold;
     ctx.fillStyle = fg;
-    ctx.fillText(HUD_BUTTON_LABEL[btn], i * btnW + btnW / 2, btnMidY);
+    ctx.fillText(HUD_BUTTON_LABEL[btn], x + btnW / 2, btnMidY);
   }
+
+  // 7) Bottom accent rule — thin gold line marks the boundary between HUD
+  //    chrome and the puzzle board.
+  ctx.strokeStyle = UI.ruleAccent;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, hudBottom - 0.5);
+  ctx.lineTo(cssW, hudBottom - 0.5);
+  ctx.stroke();
 }
 
 function isHudButtonEnabled(btn: HudButton): boolean {
@@ -821,51 +958,98 @@ function formatMs(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function drawNoLivesOverlay(): NoLivesHitbox {
-  ctx.fillStyle = "rgba(15,23,42,0.78)";
+// Shared modal card chrome: backdrop dim, rounded card, title eyebrow,
+// title, body lines, primary CTA, secondary close.
+function drawModalCard(
+  cardW: number,
+  cardH: number,
+  eyebrow: string,
+  title: string,
+): { cardX: number; cardY: number } {
+  ctx.fillStyle = UI.modalBackdrop;
   ctx.fillRect(0, 0, cssW, cssH);
 
-  const cardW = Math.min(320, cssW - 48);
-  const cardH = 240;
   const cardX = (cssW - cardW) / 2;
   const cardY = (cssH - cardH) / 2;
 
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(cardX, cardY, cardW, cardH);
+  // Card body — rounded, with a thin top accent rule in gold.
+  roundRectPath(cardX, cardY, cardW, cardH, 16);
+  ctx.fillStyle = UI.modalCardBg;
+  ctx.fill();
+  ctx.strokeStyle = UI.modalCardBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
 
-  ctx.fillStyle = "#f8fafc";
-  ctx.font = "bold 18px sans-serif";
+  ctx.strokeStyle = UI.modalAccent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cardX + 22, cardY + 14);
+  ctx.lineTo(cardX + 56, cardY + 14);
+  ctx.stroke();
+
+  // Eyebrow — small caps gold, above title.
+  ctx.fillStyle = UI.modalAccent;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("心已用光", cardX + cardW / 2, cardY + 36);
+  ctx.font = `bold 10px ${UI.fontDisplayCJK}`;
+  ctx.fillText(eyebrow, cardX + cardW / 2, cardY + 32);
 
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "13px sans-serif";
-  ctx.fillText("等待恢复，或看广告 +1", cardX + cardW / 2, cardY + 64);
+  // Title.
+  ctx.fillStyle = UI.modalTitle;
+  ctx.font = `bold 19px ${UI.fontDisplayCJK}`;
+  ctx.fillText(title, cardX + cardW / 2, cardY + 58);
+
+  return { cardX, cardY };
+}
+
+function drawPrimaryCta(x: number, y: number, w: number, h: number, label: string): void {
+  roundRectPath(x, y, w, h, 10);
+  ctx.fillStyle = UI.ctaPrimaryBg;
+  ctx.fill();
+  ctx.fillStyle = UI.ctaPrimaryText;
+  ctx.font = `bold 15px ${UI.fontDisplayCJK}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + w / 2, y + h / 2);
+}
+
+function drawSecondaryCta(x: number, y: number, w: number, h: number, label: string): void {
+  roundRectPath(x, y, w, h, 10);
+  ctx.strokeStyle = UI.ctaSecondaryBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = UI.ctaSecondaryText;
+  ctx.font = `14px ${UI.fontDisplayCJK}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + w / 2, y + h / 2);
+}
+
+function drawNoLivesOverlay(): NoLivesHitbox {
+  const cardW = Math.min(330, cssW - 40);
+  const cardH = 268;
+  const { cardX, cardY } = drawModalCard(cardW, cardH, "ENERGY", "心已用光");
+
+  ctx.fillStyle = UI.modalBody;
+  ctx.font = `13px ${UI.fontDisplayCJK}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("等待心数自动恢复，或观看广告 +1 心", cardX + cardW / 2, cardY + 88);
 
   tickLives();
   const ms = nextRegenMs();
-  ctx.fillStyle = "#f1f5f9";
-  ctx.font = "24px sans-serif";
-  ctx.fillText(ms == null ? "已恢复" : formatMs(ms), cardX + cardW / 2, cardY + 108);
+  ctx.fillStyle = UI.modalAccent;
+  ctx.font = `bold 28px ${UI.fontDisplayCJK}`;
+  ctx.fillText(ms == null ? "已恢复" : formatMs(ms), cardX + cardW / 2, cardY + 130);
 
   const btnW = cardW - 40;
-  const btnH = 40;
+  const btnH = 44;
   const adX = cardX + (cardW - btnW) / 2;
-  const adY = cardY + 140;
-  ctx.fillStyle = "#22c55e";
-  ctx.fillRect(adX, adY, btnW, btnH);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 15px sans-serif";
-  ctx.fillText("看广告 +1 心", cardX + cardW / 2, adY + btnH / 2);
+  const adY = cardY + 160;
+  drawPrimaryCta(adX, adY, btnW, btnH, "看广告 +1 心");
 
   const closeY = adY + btnH + 10;
-  ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(adX, closeY, btnW, btnH);
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "14px sans-serif";
-  ctx.fillText("稍后再来", cardX + cardW / 2, closeY + btnH / 2);
+  drawSecondaryCta(adX, closeY, btnW, btnH, "稍后再来");
 
   return {
     ad: { x: adX, y: adY, w: btnW, h: btnH },
@@ -874,45 +1058,25 @@ function drawNoLivesOverlay(): NoLivesHitbox {
 }
 
 function drawNoHintsOverlay(): NoHintsHitbox {
-  ctx.fillStyle = "rgba(15,23,42,0.78)";
-  ctx.fillRect(0, 0, cssW, cssH);
+  const cardW = Math.min(330, cssW - 40);
+  const cardH = 248;
+  const { cardX, cardY } = drawModalCard(cardW, cardH, "HINT", "提示已用完");
 
-  const cardW = Math.min(320, cssW - 48);
-  const cardH = 220;
-  const cardX = (cssW - cardW) / 2;
-  const cardY = (cssH - cardH) / 2;
-
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(cardX, cardY, cardW, cardH);
-
-  ctx.fillStyle = "#f8fafc";
-  ctx.font = "bold 18px sans-serif";
+  ctx.fillStyle = UI.modalBody;
+  ctx.font = `13px ${UI.fontDisplayCJK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("提示次数已用完", cardX + cardW / 2, cardY + 36);
-
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "13px sans-serif";
-  ctx.fillText(`看一段广告补 ${HINT_AD_REFILL} 次提示`, cardX + cardW / 2, cardY + 66);
-  ctx.fillText(`额外赠送 ${COIN_PER_AD} 金币`, cardX + cardW / 2, cardY + 88);
+  ctx.fillText(`看一段广告补 ${HINT_AD_REFILL} 次提示`, cardX + cardW / 2, cardY + 90);
+  ctx.fillText(`额外赠送 ${COIN_PER_AD} 金币`, cardX + cardW / 2, cardY + 112);
 
   const btnW = cardW - 40;
-  const btnH = 40;
+  const btnH = 44;
   const adX = cardX + (cardW - btnW) / 2;
-  const adY = cardY + 120;
-  ctx.fillStyle = "#f59e0b";
-  ctx.fillRect(adX, adY, btnW, btnH);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 15px sans-serif";
-  ctx.fillText(`看广告 +${HINT_AD_REFILL} 提示`, cardX + cardW / 2, adY + btnH / 2);
+  const adY = cardY + 140;
+  drawPrimaryCta(adX, adY, btnW, btnH, `看广告 +${HINT_AD_REFILL} 提示`);
 
   const closeY = adY + btnH + 10;
-  ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(adX, closeY, btnW, btnH);
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "14px sans-serif";
-  ctx.fillText("稍后再来", cardX + cardW / 2, closeY + btnH / 2);
+  drawSecondaryCta(adX, closeY, btnW, btnH, "稍后再来");
 
   return {
     ad: { x: adX, y: adY, w: btnW, h: btnH },
@@ -921,45 +1085,34 @@ function drawNoHintsOverlay(): NoHintsHitbox {
 }
 
 function drawSettingsOverlay(): SettingsHitbox {
-  ctx.fillStyle = "rgba(15,23,42,0.78)";
-  ctx.fillRect(0, 0, cssW, cssH);
-
-  const cardW = Math.min(320, cssW - 48);
-  const cardH = 260;
-  const cardX = (cssW - cardW) / 2;
-  const cardY = (cssH - cardH) / 2;
-
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(cardX, cardY, cardW, cardH);
-
-  ctx.fillStyle = "#f8fafc";
-  ctx.font = "bold 18px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("设置", cardX + cardW / 2, cardY + 36);
+  const cardW = Math.min(330, cssW - 40);
+  const cardH = 278;
+  const { cardX, cardY } = drawModalCard(cardW, cardH, "SETTINGS", "设置");
 
   const rowW = cardW - 40;
-  const rowH = 44;
+  const rowH = 48;
   const rowX = cardX + (cardW - rowW) / 2;
 
   const drawRow = (y: number, label: string, on: boolean): RectHit => {
-    ctx.fillStyle = "#0f172a";
-    ctx.fillRect(rowX, y, rowW, rowH);
-    ctx.fillStyle = "#e2e8f0";
-    ctx.font = "14px sans-serif";
+    roundRectPath(rowX, y, rowW, rowH, 10);
+    ctx.fillStyle = "#1a1820";
+    ctx.fill();
+    ctx.fillStyle = UI.modalTitle;
+    ctx.font = `14px ${UI.fontDisplayCJK}`;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText(label, rowX + 12, y + rowH / 2);
+    ctx.fillText(label, rowX + 14, y + rowH / 2);
 
-    const knobW = 56;
-    const knobH = 28;
+    const knobW = 50;
+    const knobH = 26;
     const knobX = rowX + rowW - knobW - 12;
     const knobY = y + (rowH - knobH) / 2;
-    ctx.fillStyle = on ? "#22c55e" : "#475569";
-    ctx.fillRect(knobX, knobY, knobW, knobH);
-    ctx.fillStyle = "#ffffff";
+    roundRectPath(knobX, knobY, knobW, knobH, knobH / 2);
+    ctx.fillStyle = on ? UI.switchOn : UI.switchOff;
+    ctx.fill();
     const dotR = (knobH - 6) / 2;
     const dotCX = on ? knobX + knobW - dotR - 3 : knobX + dotR + 3;
+    ctx.fillStyle = UI.switchKnob;
     ctx.beginPath();
     ctx.arc(dotCX, knobY + knobH / 2, dotR, 0, Math.PI * 2);
     ctx.fill();
@@ -967,25 +1120,17 @@ function drawSettingsOverlay(): SettingsHitbox {
     return { x: rowX, y, w: rowW, h: rowH };
   };
 
-  const sfxBox = drawRow(cardY + 70, "音效", progress.settings.sfx);
-  const vibBox = drawRow(cardY + 70 + rowH + 12, "震动反馈", progress.settings.vibrate);
+  const sfxBox = drawRow(cardY + 86, "音效", progress.settings.sfx);
+  const vibBox = drawRow(cardY + 86 + rowH + 12, "震动反馈", progress.settings.vibrate);
 
-  const btnW = rowW;
-  const btnH = 40;
-  const closeX = rowX;
+  const btnH = 44;
   const closeY = cardY + cardH - btnH - 16;
-  ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(closeX, closeY, btnW, btnH);
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "14px sans-serif";
-  ctx.textBaseline = "middle";
-  ctx.fillText("关闭", cardX + cardW / 2, closeY + btnH / 2);
+  drawSecondaryCta(rowX, closeY, rowW, btnH, "关闭");
 
   return {
     sfx: sfxBox,
     vibrate: vibBox,
-    close: { x: closeX, y: closeY, w: btnW, h: btnH },
+    close: { x: rowX, y: closeY, w: rowW, h: btnH },
   };
 }
 
@@ -998,14 +1143,17 @@ function pointInRect(
 }
 
 function drawLoadingOverlay(): void {
-  ctx.fillStyle = "rgba(15,23,42,0.72)";
+  ctx.fillStyle = "rgba(12, 17, 28, 0.78)";
   ctx.fillRect(0, boardTop, cssW, boardH);
-  ctx.fillStyle = "#e2e8f0";
-  ctx.font = `${Math.floor(Math.min(cssW, cssH) * 0.06)}px sans-serif`;
+  ctx.fillStyle = UI.modalAccent;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.font = `bold 11px ${UI.fontDisplayCJK}`;
+  ctx.fillText("LOADING", cssW / 2, boardTop + boardH / 2 - 22);
+  ctx.fillStyle = UI.textPrimary;
+  ctx.font = `bold ${Math.floor(Math.min(cssW, cssH) * 0.052)}px ${UI.fontDisplayCJK}`;
   const dots = ".".repeat(1 + (Math.floor(performance.now() / 350) % 3));
-  ctx.fillText(`加载关卡${dots}`, cssW / 2, boardTop + boardH / 2);
+  ctx.fillText(`加载关卡${dots}`, cssW / 2, boardTop + boardH / 2 + 4);
 }
 
 // --- splash --------------------------------------------------------------
@@ -1022,51 +1170,68 @@ const HEALTH_ADVISORY_LINES = [
 const AGE_NOTICE = "适龄提示：本游戏适合 8 岁以上用户使用";
 
 function drawSplash(): { x: number; y: number; w: number; h: number } {
-  // Same dark capsule-reserve band so the platform capsule (×, ...) sits
-  // on a consistent backdrop instead of bare canvas.
-  ctx.fillStyle = "#0f172a";
-  ctx.fillRect(0, 0, cssW, safeTop);
+  // Full-screen warm-charcoal canvas.
+  ctx.fillStyle = UI.hudBg;
+  ctx.fillRect(0, 0, cssW, cssH);
 
-  const title = "箭路脱困";
   const cx = cssW / 2;
   const titleY = safeTop + Math.max(80, cssH * 0.18);
 
-  ctx.fillStyle = "#fde047";
+  // Small caps eyebrow above the title — bold gold "PUZZLE".
+  ctx.fillStyle = UI.modalAccent;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `bold ${Math.floor(Math.min(cssW, 480) * 0.11)}px sans-serif`;
-  ctx.fillText(title, cx, titleY);
+  ctx.font = `bold 11px ${UI.fontDisplayCJK}`;
+  ctx.fillText("ARROW · PUZZLE", cx, titleY - 38);
 
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "13px sans-serif";
-  ctx.fillText("休闲益智 · 箭头脱困谜题", cx, titleY + 38);
+  // Two thin gold accent rules flanking the eyebrow add an editorial feel.
+  ctx.strokeStyle = UI.modalAccent;
+  ctx.lineWidth = 1;
+  const eyebrowW = ctx.measureText("ARROW · PUZZLE").width;
+  ctx.beginPath();
+  ctx.moveTo(cx - eyebrowW / 2 - 14, titleY - 38);
+  ctx.lineTo(cx - eyebrowW / 2 - 28, titleY - 38);
+  ctx.moveTo(cx + eyebrowW / 2 + 14, titleY - 38);
+  ctx.lineTo(cx + eyebrowW / 2 + 28, titleY - 38);
+  ctx.stroke();
 
-  // Health advisory block
-  const advisoryY = titleY + 110;
-  ctx.fillStyle = "#cbd5e1";
-  ctx.font = "bold 13px sans-serif";
-  ctx.fillText("健康游戏忠告", cx, advisoryY);
-  ctx.fillStyle = "#e2e8f0";
-  ctx.font = "12px sans-serif";
+  // Title.
+  ctx.fillStyle = UI.modalTitle;
+  ctx.font = `bold ${Math.floor(Math.min(cssW, 480) * 0.13)}px ${UI.fontDisplayCJK}`;
+  ctx.fillText("箭路脱困", cx, titleY);
+
+  // Subtitle.
+  ctx.fillStyle = UI.textSecondary;
+  ctx.font = `13px ${UI.fontDisplayCJK}`;
+  ctx.fillText("休闲益智 · 箭头脱困谜题", cx, titleY + 42);
+
+  // Health advisory block.
+  const advisoryY = titleY + 118;
+  ctx.fillStyle = UI.modalAccent;
+  ctx.font = `bold 10px ${UI.fontDisplayCJK}`;
+  ctx.fillText("健 康 游 戏 忠 告", cx, advisoryY);
+  ctx.fillStyle = UI.textPrimary;
+  ctx.font = `12px ${UI.fontDisplayCJK}`;
   for (let i = 0; i < HEALTH_ADVISORY_LINES.length; i++) {
-    ctx.fillText(HEALTH_ADVISORY_LINES[i]!, cx, advisoryY + 24 + i * 18);
+    ctx.fillText(HEALTH_ADVISORY_LINES[i]!, cx, advisoryY + 26 + i * 19);
   }
 
-  // Age notice
-  const ageY = advisoryY + 24 + HEALTH_ADVISORY_LINES.length * 18 + 22;
-  ctx.fillStyle = "#22c55e";
-  ctx.font = "bold 13px sans-serif";
+  // Age notice — mint green to signal "official".
+  const ageY = advisoryY + 26 + HEALTH_ADVISORY_LINES.length * 19 + 24;
+  ctx.fillStyle = UI.statusWon;
+  ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
   ctx.fillText(AGE_NOTICE, cx, ageY);
 
-  // Start button
-  const btnW = Math.min(220, cssW - 80);
-  const btnH = 48;
+  // Start button — solid coral CTA, rounded.
+  const btnW = Math.min(240, cssW - 64);
+  const btnH = 52;
   const btnX = (cssW - btnW) / 2;
-  const btnY = Math.min(cssH - btnH - 40, ageY + 60);
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillRect(btnX, btnY, btnW, btnH);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 18px sans-serif";
+  const btnY = Math.min(cssH - btnH - 40, ageY + 64);
+  roundRectPath(btnX, btnY, btnW, btnH, 12);
+  ctx.fillStyle = UI.ctaPrimaryBg;
+  ctx.fill();
+  ctx.fillStyle = UI.ctaPrimaryText;
+  ctx.font = `bold 18px ${UI.fontDisplayCJK}`;
   ctx.fillText("开始游戏", cx, btnY + btnH / 2);
 
   return { x: btnX, y: btnY, w: btnW, h: btnH };

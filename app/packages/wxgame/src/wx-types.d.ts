@@ -37,6 +37,7 @@ interface WxCanvasRenderingContext2D {
   fill(): void;
   stroke(): void;
   fillText(text: string, x: number, y: number): void;
+  measureText(text: string): { width: number };
 }
 
 interface WxTouch {

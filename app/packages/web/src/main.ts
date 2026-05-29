@@ -388,27 +388,31 @@ function render(): void {
 function updateStatus(): void {
   if (loadingKey != null) {
     status.textContent = "加载中…";
-    status.style.color = "#94a3b8";
+    status.dataset.tone = "loading";
     return;
   }
   if (!game) {
     status.textContent = "";
+    delete status.dataset.tone;
     return;
   }
   const remaining = game.arrows.filter((a) => !a.escaped).length;
   if (game.status === "won") {
-    status.textContent = "通关！";
-    status.style.color = "#22c55e";
+    status.textContent = "通关 ✓";
+    status.dataset.tone = "won";
   } else {
     status.textContent = `剩余 ${remaining}/${game.arrows.length}`;
-    status.style.color = "#e2e8f0";
+    status.dataset.tone = "playing";
   }
 }
 
 function updatePickerLabel(): void {
   const entry = entries.find((e) => e.key === currentKey);
   const idx = entry ? entries.indexOf(entry) + 1 : 0;
-  pickerLabel.textContent = entry ? `${idx}/${entries.length}  ${entry.name}` : "—";
+  // The pill's CSS pseudo-element already prints "LV"; the label just shows
+  // the index/total in tabular numerals so the chip stays narrow and never
+  // collides with the centered status text or right-anchored lives.
+  pickerLabel.textContent = entry ? `${idx} / ${entries.length}` : "—";
 }
 
 function selectLevel(key: string): void {
@@ -723,8 +727,10 @@ canvas.addEventListener(
 
 // --- lives UI ---------------------------------------------------------------
 
-const HEART_FULL = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#ef4444" stroke="#7f1d1d" stroke-width="1.2" stroke-linejoin="round" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
-const HEART_EMPTY = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="#475569" stroke-width="1.4" stroke-linejoin="round" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
+// Coral filled / hollow heart glyphs — match the canvas heart palette in
+// the wxgame HUD so both clients render the same iconography.
+const HEART_FULL = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="#fb6e51" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
+const HEART_EMPTY = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="#3a4257" stroke-width="1.6" stroke-linejoin="round" d="M12 20.5s-7.2-4.4-9.2-9.1C1.2 7.2 4.3 3.5 8 4.2c1.7.3 3.1 1.4 4 2.8.9-1.4 2.3-2.5 4-2.8 3.7-.7 6.8 3 5.2 7.2C19.2 16.1 12 20.5 12 20.5Z"/></svg>`;
 
 function formatMs(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));

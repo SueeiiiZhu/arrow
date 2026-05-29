@@ -30,10 +30,10 @@ export function drawWinOverlay(
   const burstFade = 1 - easeIn(clamp01((phase - 0.35) / 0.55));
   const btnP = easeOut(clamp01((phase - 0.45) / 0.35));
 
-  // 1) Backdrop — matches the board background so the overlay feels like a
-  //    dimmed continuation of the board, not a foreign panel.
-  ctx.globalAlpha = backdropP * 0.82;
-  ctx.fillStyle = "#0f172a";
+  // 1) Backdrop — matches the HUD chrome so the overlay feels like a
+  //    dimmed continuation of the screen, not a foreign panel.
+  ctx.globalAlpha = backdropP * 0.86;
+  ctx.fillStyle = "#0c111c";
   ctx.fillRect(0, 0, canvasW, canvasH);
   ctx.globalAlpha = 1;
 
@@ -67,42 +67,44 @@ export function drawWinOverlay(
     ctx.globalAlpha = 1;
   }
 
-  // 3) Title — slate-50 on the dimmed backdrop. Pure CJK so textAlign="center"
-  //    actually centers the visual ink; trailing punctuation like "！" would
-  //    shift the geometric center off the visual one, breaking alignment with
-  //    the button below.
+  // 3) Eyebrow + Title — small caps gold "VICTORY" above a bold cream
+  //    "通关" line. Same editorial chrome as the in-game modals.
   if (titleP > 0.02) {
     ctx.save();
     ctx.translate(cx, titleY);
     ctx.scale(titleP, titleP);
-    const titleSize = Math.floor(minSide * 0.16);
-    ctx.font = `bold ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.globalAlpha = clamp01(titleP);
+
+    const eyebrowSize = Math.max(11, Math.floor(minSide * 0.022));
+    ctx.font = `bold ${eyebrowSize}px -apple-system, "PingFang SC", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.globalAlpha = clamp01(titleP);
+    ctx.fillStyle = "#e6b85c";
+    ctx.fillText("V I C T O R Y", 0, -minSide * 0.085);
+
+    const titleSize = Math.floor(minSide * 0.16);
+    ctx.font = `bold ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillText("通关", 1, 1 + cjkBaselineNudge(titleSize));
-    ctx.fillStyle = "#f8fafc";
+    ctx.fillStyle = "#f4ecdc";
     ctx.fillText("通关", 0, cjkBaselineNudge(titleSize));
     ctx.globalAlpha = 1;
     ctx.restore();
   }
 
-  // 4) Pill button — drop shadow + rounded body + centered label.
+  // 4) Pill button — drop shadow + rounded coral body + centered label,
+  //    matching the no-lives modal's primary CTA in the new palette.
   if (btnP > 0.01) {
     ctx.globalAlpha = btnP;
     const radius = btnH / 2;
-    // Shadow row, offset 3px down.
-    fillRoundedRect(ctx, btnX, btnY + 3, btnW, btnH, radius, "rgba(0,0,0,0.35)");
-    // Button body.
-    fillRoundedRect(ctx, btnX, btnY, btnW, btnH, radius, "#10b981");
+    fillRoundedRect(ctx, btnX, btnY + 3, btnW, btnH, radius, "rgba(0,0,0,0.45)");
+    fillRoundedRect(ctx, btnX, btnY, btnW, btnH, radius, "#fb6e51");
 
-    // Label — pure CJK, perfectly centered.
-    const labelSize = Math.floor(btnH * 0.4);
+    const labelSize = Math.floor(btnH * 0.42);
     ctx.font = `bold ${labelSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = "#15131a";
     ctx.fillText("下一关", cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
     ctx.globalAlpha = 1;
   }
