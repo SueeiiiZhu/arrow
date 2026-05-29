@@ -54,7 +54,7 @@ export function encodeLevel(raw) {
  * an arrow can self-block in a way that reads, visually, as the head
  * eating its own bent body. We drop those levels from shipped packs.
  */
-function levelHasSelfRayArrow(raw) {
+export function levelHasSelfRayArrow(raw) {
   const W = raw.width;
   const H = raw.height;
   const maxJ = W + H;

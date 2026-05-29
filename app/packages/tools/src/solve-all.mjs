@@ -8,6 +8,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { levelHasSelfRayArrow } from "../../wxgame/scripts/_encode.mjs";
 import { createGame, dfs, greedy, loadLevel, resetGame } from "./_solver.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,9 +18,20 @@ const limitArg = process.argv.find((a) => a.startsWith("--limit="));
 const rawLimit = limitArg ? limitArg.split("=")[1] : "50";
 const LIMIT = rawLimit === "all" ? Infinity : Number(rawLimit);
 
+// Mirror the shipped corpus: drop self-ray levels that the post-2026-05-28
+// tightened tryPull rule no longer admits. Same predicate as _encode.mjs.
+let skippedSelfRay = 0;
 const all = readdirSync(LEVELS_DIR)
   .filter((f) => f.endsWith(".json"))
-  .sort();
+  .sort()
+  .filter((f) => {
+    const raw = JSON.parse(readFileSync(resolve(LEVELS_DIR, f), "utf8"));
+    if (levelHasSelfRayArrow(raw)) {
+      skippedSelfRay++;
+      return false;
+    }
+    return true;
+  });
 const files = all.slice(0, Number.isFinite(LIMIT) ? LIMIT : all.length);
 
 let solvedGreedy = 0;
@@ -57,7 +69,7 @@ for (const f of files) {
   }
 }
 
-console.log(`\n=== ${files.length} levels ===`);
+console.log(`\n=== ${files.length} levels (skipped ${skippedSelfRay} self-ray) ===`);
 console.log(`solved by greedy escape-first:        ${solvedGreedy}`);
 console.log(`solved by DFS (with state memo):      ${solvedDFS}`);
 console.log(`total solved:                         ${solvedGreedy + solvedDFS}/${files.length}`);
