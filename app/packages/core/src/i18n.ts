@@ -67,8 +67,12 @@ const zh: Dict = {
   "settings.eyebrow": "SETTINGS",
   "settings.title": "设置",
   "settings.sfx": "音效",
+  "settings.sfx.sub": "按钮、推动、通关音效",
   "settings.vibrate": "震动反馈",
+  "settings.showPaths": "显示路径",
+  "settings.showPaths.sub": "在棋盘上画出每个箭头的折线轨迹",
   "settings.close": "关闭",
+  "settings.openLabel": "打开设置",
 
   // Loading overlay (wxgame splash → game transition)
   "loading.eyebrow": "LOADING",

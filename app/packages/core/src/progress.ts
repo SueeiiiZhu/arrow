@@ -12,11 +12,11 @@ export interface Progress {
   /** Soft currency. Earned on win and via rewarded video (备案: 货币系统). */
   coins: number;
   /** Settings panel — 备案: 设置系统. */
-  settings: { sfx: boolean; vibrate: boolean };
+  settings: { sfx: boolean; vibrate: boolean; showPaths: boolean };
 }
 
 export const DEFAULT_HINTS = 3;
-const DEFAULT_SETTINGS = { sfx: true, vibrate: true };
+const DEFAULT_SETTINGS = { sfx: true, vibrate: true, showPaths: true };
 
 export interface ProgressStorage {
   read(): string | null;
@@ -61,6 +61,10 @@ export function loadProgress(storage: ProgressStorage): Progress {
       sfx: typeof rawSettings.sfx === "boolean" ? rawSettings.sfx : DEFAULT_SETTINGS.sfx,
       vibrate:
         typeof rawSettings.vibrate === "boolean" ? rawSettings.vibrate : DEFAULT_SETTINGS.vibrate,
+      showPaths:
+        typeof rawSettings.showPaths === "boolean"
+          ? rawSettings.showPaths
+          : DEFAULT_SETTINGS.showPaths,
     };
     return {
       lastKey,

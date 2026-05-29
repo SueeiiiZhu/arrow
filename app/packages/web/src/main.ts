@@ -297,7 +297,6 @@ const allTags = [...new Set(entries.flatMap((e) => e.tags))].sort();
 
 // --- DOM refs ---------------------------------------------------------------
 
-const showPathsBox = document.getElementById("show-paths") as HTMLInputElement;
 const meta = document.getElementById("meta") as HTMLSpanElement;
 const status = document.getElementById("status") as HTMLSpanElement;
 const prevBtn = document.getElementById("prev-btn") as HTMLButtonElement;
@@ -323,6 +322,12 @@ const pickerCount = document.getElementById("picker-count") as HTMLSpanElement;
 const pickerClose = document.getElementById("picker-close") as HTMLButtonElement;
 const pickerTags = document.getElementById("picker-tags") as HTMLDivElement;
 const pickerList = document.getElementById("picker-list") as HTMLDivElement;
+
+const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
+const settingsDialog = document.getElementById("settings-dialog") as HTMLDivElement;
+const stRowSfx = document.getElementById("st-row-sfx") as HTMLDivElement;
+const stRowShowPaths = document.getElementById("st-row-show-paths") as HTMLDivElement;
+const stCloseBtn = document.getElementById("st-close-btn") as HTMLButtonElement;
 
 let game: GameState | null = null;
 let currentKey: string | null = null;
@@ -401,7 +406,7 @@ function render(): void {
   }
 
   drawGame(ctx as any, game, t, {
-    showPaths: showPathsBox.checked,
+    showPaths: progress.settings.showPaths,
     progressOverride,
     drawEscapedIds,
     highlightArrowId,
@@ -701,8 +706,43 @@ function closePicker(): void {
 
 // --- wiring -----------------------------------------------------------------
 
-showPathsBox.addEventListener("change", render);
 window.addEventListener("resize", resize);
+
+// --- settings dialog --------------------------------------------------------
+
+function applySettingsToWorld(): void {
+  synth.muted = !progress.settings.sfx;
+}
+function refreshSettingsUI(): void {
+  stRowSfx.dataset.on = String(progress.settings.sfx);
+  stRowShowPaths.dataset.on = String(progress.settings.showPaths);
+}
+function openSettings(): void {
+  refreshSettingsUI();
+  settingsDialog.hidden = false;
+}
+function closeSettings(): void {
+  settingsDialog.hidden = true;
+}
+applySettingsToWorld();
+refreshSettingsUI();
+settingsBtn.addEventListener("click", openSettings);
+stCloseBtn.addEventListener("click", closeSettings);
+settingsDialog.addEventListener("click", (ev) => {
+  if (ev.target === settingsDialog) closeSettings();
+});
+stRowSfx.addEventListener("click", () => {
+  progress.settings.sfx = !progress.settings.sfx;
+  applySettingsToWorld();
+  refreshSettingsUI();
+  persist();
+});
+stRowShowPaths.addEventListener("click", () => {
+  progress.settings.showPaths = !progress.settings.showPaths;
+  refreshSettingsUI();
+  persist();
+  render();
+});
 
 prevBtn.addEventListener("click", () => {
   const i = entries.findIndex((e) => e.key === currentKey);
@@ -738,6 +778,10 @@ pickerSearch.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") closePicker();
 });
 window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !settingsDialog.hidden) {
+    closeSettings();
+    return;
+  }
   if (ev.key === "Escape" && !pickerPanel.hidden) closePicker();
   // Don't steal keystrokes from the picker search input.
   if (document.activeElement === pickerSearch) return;
