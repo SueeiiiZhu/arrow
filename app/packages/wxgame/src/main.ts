@@ -879,7 +879,12 @@ function drawHud(): void {
   const gearR = 11;
   const gearCX = cssW - 12 - gearR;
   drawGearIcon(gearCX, row2MidY, gearR);
-  gearHitbox = { x: gearCX - gearR - 4, y: row2MidY - gearR - 4, w: gearR * 2 + 8, h: gearR * 2 + 8 };
+  gearHitbox = {
+    x: gearCX - gearR - 4,
+    y: row2MidY - gearR - 4,
+    w: gearR * 2 + 8,
+    h: gearR * 2 + 8,
+  };
 
   // 5) Hairline above button row (cool slate), then accent gold rule at
   //    the bottom of the HUD to visually separate chrome from the board.

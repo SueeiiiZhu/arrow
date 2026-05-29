@@ -81,7 +81,9 @@ console.log(`packs scanned:               ${packFiles.length}`);
 console.log(`levels:                      ${totalLevels}`);
 console.log(`arrows total:                ${totalArrows}`);
 console.log(`arrows with self-ray cell:   ${arrowsWithSelfRay}`);
-console.log(`ratio:                       ${((arrowsWithSelfRay / totalArrows) * 100).toFixed(3)}%`);
+console.log(
+  `ratio:                       ${((arrowsWithSelfRay / totalArrows) * 100).toFixed(3)}%`,
+);
 if (samples.length > 0) {
   console.log(`\nSample arrows where a path cell is on the head's facing ray:`);
   for (const s of samples) {
