@@ -56,6 +56,7 @@ interface WxSystemInfo {
   windowWidth: number;
   windowHeight: number;
   pixelRatio: number;
+  language?: string;
 }
 
 interface WxLoadSubpackageTask {

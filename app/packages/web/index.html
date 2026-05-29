@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>箭路脱困</title>
+    <title data-i18n="app.title">箭路脱困</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -324,44 +324,44 @@
   <body>
     <div id="app">
       <header>
-        <button id="picker-btn" aria-label="切换关卡"><span id="picker-label">—</span></button>
+        <button id="picker-btn" data-i18n-attr-aria-label="picker.btnLabel" aria-label="切换关卡"><span id="picker-label">—</span></button>
         <span id="status"></span>
         <span id="lives">
           <span id="lives-hearts"></span>
           <span id="lives-timer"></span>
         </span>
         <div class="hud-controls">
-          <button id="prev-btn" class="btn">‹ 上一关</button>
-          <button id="hint-btn" class="btn accent" title="提示下一步 (H)">提示</button>
-          <button id="reset-btn" class="btn">重开</button>
-          <button id="undo-btn" class="btn" title="撤销上一步 (Z)" disabled>撤销</button>
-          <button id="next-btn" class="btn">下一关 ›</button>
-          <label><input type="checkbox" id="show-paths" /> 显示路径</label>
+          <button id="prev-btn" class="btn" data-i18n="hud.btn.prev">‹ 上一关</button>
+          <button id="hint-btn" class="btn accent" data-i18n="hud.btn.hint" data-i18n-attr-title="hud.btn.hintTitle" title="提示下一步 (H)">提示</button>
+          <button id="reset-btn" class="btn" data-i18n="hud.btn.reset">重开</button>
+          <button id="undo-btn" class="btn" data-i18n="hud.btn.undo" data-i18n-attr-title="hud.btn.undoTitle" title="撤销上一步 (Z)" disabled>撤销</button>
+          <button id="next-btn" class="btn" data-i18n="hud.btn.next">下一关 ›</button>
+          <label><input type="checkbox" id="show-paths" /> <span data-i18n="hud.btn.showPaths">显示路径</span></label>
           <span id="meta"></span>
         </div>
       </header>
       <main>
         <canvas id="board"></canvas>
-        <div class="info">点箭头拉出，被挡住会停下并扣一颗心。</div>
+        <div class="info" data-i18n="info.tap">点箭头拉出，被挡住会停下并扣一颗心。</div>
       </main>
     </div>
     <div id="no-lives-dialog" hidden>
       <div class="nl-card">
-        <p class="nl-eyebrow">ENERGY</p>
-        <p class="nl-title">心已用光</p>
-        <p class="nl-sub">等待心数自动恢复，或看一个广告免费补 1 颗。</p>
+        <p class="nl-eyebrow" data-i18n="noLives.eyebrow">ENERGY</p>
+        <p class="nl-title" data-i18n="noLives.title">心已用光</p>
+        <p class="nl-sub" data-i18n="noLives.sub">等待心数自动恢复，或看一个广告免费补 1 颗。</p>
         <p class="nl-timer" id="nl-timer">--:--</p>
         <div class="nl-actions">
-          <button id="nl-ad-btn">看广告 +1 心</button>
-          <button id="nl-close-btn">稍后再来</button>
+          <button id="nl-ad-btn" data-i18n="noLives.ad">看广告 +1 心</button>
+          <button id="nl-close-btn" data-i18n="noLives.later">稍后再来</button>
         </div>
       </div>
     </div>
     <div id="picker-panel" hidden>
       <div class="picker-head">
-        <input id="picker-search" type="search" placeholder="搜索：名字 / 标签 / 尺寸 …" />
+        <input id="picker-search" type="search" data-i18n-attr-placeholder="picker.placeholder" placeholder="搜索：名字 / 标签 / 尺寸 …" />
         <span id="picker-count"></span>
-        <button id="picker-close" aria-label="关闭">×</button>
+        <button id="picker-close" data-i18n-attr-aria-label="picker.closeLabel" aria-label="关闭">×</button>
       </div>
       <div id="picker-tags"></div>
       <div id="picker-list"></div>

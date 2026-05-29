@@ -2,11 +2,13 @@ import {
   type CompactLevel,
   createGame,
   decodeCompact,
+  detectLangFromTag,
   ensureShuffleSeed,
   findArrowAt,
   findNextMove,
   type GameSnapshot,
   type GameState,
+  getLang,
   loadLevel,
   loadProgress,
   type Progress,
@@ -14,8 +16,10 @@ import {
   resetGame,
   restoreGame,
   saveProgress,
+  setLang,
   shuffleByDifficulty,
   snapshotGame,
+  t,
   tryPull,
   validateLevel,
 } from "@ea/core";
@@ -253,6 +257,30 @@ function persist(): void {
   saveProgress(storage, progress);
 }
 
+// --- i18n bootstrap ---------------------------------------------------------
+
+setLang(detectLangFromTag(navigator.language));
+
+function applyStaticI18n(): void {
+  const textNodes = document.querySelectorAll<HTMLElement>("[data-i18n]");
+  textNodes.forEach((el) => {
+    const key = el.dataset.i18n;
+    if (key) el.textContent = t(key);
+  });
+  const allNodes = document.querySelectorAll<HTMLElement>("*");
+  const prefix = "data-i18n-attr-";
+  allNodes.forEach((el) => {
+    for (let i = 0; i < el.attributes.length; i++) {
+      const attr = el.attributes.item(i);
+      if (!attr?.name.startsWith(prefix)) continue;
+      const targetAttr = attr.name.slice(prefix.length);
+      el.setAttribute(targetAttr, t(attr.value));
+    }
+  });
+  document.documentElement.lang = getLang();
+}
+applyStaticI18n();
+
 // --- ordering ---------------------------------------------------------------
 //
 // shuffleByDifficulty groups ALL_KEYS into difficulty quantiles (bucket
@@ -390,7 +418,7 @@ function render(): void {
 
 function updateStatus(): void {
   if (loadingKey != null) {
-    status.textContent = "加载中…";
+    status.textContent = t("hud.status.loading");
     status.dataset.tone = "loading";
     return;
   }
@@ -401,10 +429,13 @@ function updateStatus(): void {
   }
   const remaining = game.arrows.filter((a) => !a.escaped).length;
   if (game.status === "won") {
-    status.textContent = "通关 ✓";
+    status.textContent = t("hud.status.won");
     status.dataset.tone = "won";
   } else {
-    status.textContent = `剩余 ${remaining}/${game.arrows.length}`;
+    status.textContent = t("hud.status.remaining", {
+      remaining,
+      total: game.arrows.length,
+    });
     status.dataset.tone = "playing";
   }
 }
@@ -428,7 +459,7 @@ function selectLevel(key: string): void {
   clearUndoStack();
   hintArrowId = null;
   winStart = null;
-  meta.textContent = "加载中…";
+  meta.textContent = t("hud.status.loading");
   updatePickerLabel();
   updateStatus();
   refreshHistoryControls();
@@ -437,15 +468,15 @@ function selectLevel(key: string): void {
     .then((compact) => {
       if (loadingKey !== key) return; // user moved on already
       if (!compact) {
-        meta.textContent = `[关卡缺失] ${key}`;
+        meta.textContent = t("meta.levelMissing", { key });
         loadingKey = null;
         return;
       }
       const level = loadLevel(decodeCompact(compact));
       const err = validateLevel(level);
       meta.textContent = err
-        ? `[校验失败] ${err}`
-        : `${level.width}×${level.height}  ${level.arrows.length} 箭头`;
+        ? t("meta.invalid", { err })
+        : t("meta.size", { w: level.width, h: level.height, n: level.arrows.length });
       game = createGame(level);
       loadingKey = null;
       progress.lastKey = key;
@@ -456,7 +487,7 @@ function selectLevel(key: string): void {
     })
     .catch((e) => {
       if (loadingKey !== key) return;
-      meta.textContent = `[加载失败] ${String((e as Error).message ?? e)}`;
+      meta.textContent = t("meta.loadFail", { err: String((e as Error).message ?? e) });
       loadingKey = null;
       render();
     });
@@ -555,16 +586,16 @@ function doHint(): void {
   if (!game || game.status !== "playing") return;
   if (loadingKey != null || isAnimating()) return;
   hintBtn.disabled = true;
-  hintBtn.textContent = "💡 思考…";
+  hintBtn.textContent = t("hud.btn.hintThinking");
   // findNextMove is synchronous; defer one frame so the disabled-state paints
   // before we possibly block for a few hundred ms on a hard level.
   requestAnimationFrame(() => {
     const moveId = game ? findNextMove(game, Date.now() + 2000) : null;
-    hintBtn.textContent = "💡 提示";
+    hintBtn.textContent = t("hud.btn.hintIdle");
     if (moveId == null) {
-      hintBtn.textContent = "💡 无解";
+      hintBtn.textContent = t("hud.btn.hintNoSolve");
       setTimeout(() => {
-        hintBtn.textContent = "💡 提示";
+        hintBtn.textContent = t("hud.btn.hintIdle");
         refreshHistoryControls();
       }, 1200);
       return;
@@ -608,7 +639,7 @@ function matchEntry(e: Entry, search: string): boolean {
     if (!hay.includes(search)) return false;
   }
   if (activeTags.size > 0) {
-    for (const t of activeTags) if (!e.tags.includes(t)) return false;
+    for (const tag of activeTags) if (!e.tags.includes(tag)) return false;
   }
   return true;
 }
@@ -633,7 +664,7 @@ function refreshList(): void {
     metaEl.className = "picker-meta";
     const parts: string[] = [];
     if (e.size) parts.push(e.size);
-    if (e.count != null) parts.push(`${e.count} 箭`);
+    if (e.count != null) parts.push(t("meta.arrowCount", { n: e.count }));
     if (e.tags.length > 0) parts.push(e.tags.join(", "));
     metaEl.textContent = parts.join("  ·  ");
     const doneEl = document.createElement("span");
@@ -649,7 +680,7 @@ function refreshList(): void {
   if (matches.length > MAX_VISIBLE) {
     const more = document.createElement("div");
     more.className = "picker-more";
-    more.textContent = `还有 ${matches.length - MAX_VISIBLE} 项，缩小搜索范围查看全部`;
+    more.textContent = t("picker.more", { n: matches.length - MAX_VISIBLE });
     pickerList.appendChild(more);
   }
 }
@@ -758,7 +789,7 @@ function renderLives(): void {
   const ms = nextRegenMs();
   livesTimer.textContent = ms == null ? "" : formatMs(ms);
   if (!noLivesDialog.hidden) {
-    if (ms == null) nlTimer.textContent = "已恢复";
+    if (ms == null) nlTimer.textContent = t("noLives.recovered");
     else nlTimer.textContent = formatMs(ms);
     if (lives > 0) closeNoLivesDialog();
   }

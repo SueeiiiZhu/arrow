@@ -1,3 +1,4 @@
+import { t } from "@ea/core";
 import type { DrawCtx } from "./canvas-ctx.js";
 import { colorFor } from "./palette.js";
 
@@ -80,14 +81,15 @@ export function drawWinOverlay(
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#e6b85c";
-    ctx.fillText("V I C T O R Y", 0, -minSide * 0.085);
+    ctx.fillText(t("win.eyebrow"), 0, -minSide * 0.085);
 
     const titleSize = Math.floor(minSide * 0.16);
     ctx.font = `bold ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    const titleText = t("win.title");
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillText("通关", 1, 1 + cjkBaselineNudge(titleSize));
+    ctx.fillText(titleText, 1, 1 + cjkBaselineNudge(titleSize));
     ctx.fillStyle = "#f4ecdc";
-    ctx.fillText("通关", 0, cjkBaselineNudge(titleSize));
+    ctx.fillText(titleText, 0, cjkBaselineNudge(titleSize));
     ctx.globalAlpha = 1;
     ctx.restore();
   }
@@ -105,7 +107,7 @@ export function drawWinOverlay(
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#15131a";
-    ctx.fillText("下一关", cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
+    ctx.fillText(t("win.next"), cx, btnY + btnH / 2 + cjkBaselineNudge(labelSize));
     ctx.globalAlpha = 1;
   }
 

@@ -18,6 +18,7 @@ import {
   type CompactLevel,
   createGame,
   decodeCompact,
+  detectLangFromTag,
   ensureShuffleSeed,
   findArrowAt,
   findNextMove,
@@ -30,8 +31,10 @@ import {
   resetGame,
   restoreGame,
   saveProgress,
+  setLang,
   shuffleByDifficulty,
   snapshotGame,
+  t,
   tryPull,
 } from "@ea/core";
 import {
@@ -96,6 +99,7 @@ const ORDERED_KEYS = shuffleByDifficulty(ALL_KEYS, shuffleSeed);
 
 const sys = wx.getSystemInfoSync();
 console.log("[wxgame] System info:", sys);
+setLang(detectLangFromTag(sys.language));
 
 const canvas = (GameGlobal.canvas ?? wx.createCanvas()) as WxCanvas;
 console.log("[wxgame] Canvas created:", canvas ? "success" : "failed");
@@ -819,13 +823,20 @@ function drawLevelPill(leftX: number, midY: number): void {
 
 type HudButton = "prev" | "hint" | "reset" | "undo" | "next";
 const HUD_BUTTON_ORDER: HudButton[] = ["prev", "hint", "reset", "undo", "next"];
-const HUD_BUTTON_LABEL: Record<HudButton, string> = {
-  prev: "‹ 上一",
-  hint: "提示",
-  reset: "重开",
-  undo: "撤销",
-  next: "下一 ›",
-};
+function hudButtonLabel(b: HudButton): string {
+  switch (b) {
+    case "prev":
+      return t("hud.btn.prev");
+    case "hint":
+      return t("hud.btn.hint");
+    case "reset":
+      return t("hud.btn.reset");
+    case "undo":
+      return t("hud.btn.undo");
+    case "next":
+      return t("hud.btn.nextShort");
+  }
+}
 
 function drawHud(): void {
   // 1) Single dark band across the full HUD chrome — including the area
@@ -867,16 +878,20 @@ function drawHud(): void {
     if (game.status === "won") {
       ctx.fillStyle = UI.statusWon;
       ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
-      ctx.fillText("通关 ✓", cssW / 2, row2MidY);
+      ctx.fillText(t("hud.status.won"), cssW / 2, row2MidY);
     } else {
       ctx.fillStyle = UI.textPrimary;
       ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
-      ctx.fillText(`剩余 ${remaining}/${game.arrows.length}`, cssW / 2, row2MidY);
+      ctx.fillText(
+        t("hud.status.remaining", { remaining, total: game.arrows.length }),
+        cssW / 2,
+        row2MidY,
+      );
     }
   } else if (loadingKey != null) {
     ctx.fillStyle = UI.textSecondary;
     ctx.font = `12px ${UI.fontDisplayCJK}`;
-    ctx.fillText("加载中…", cssW / 2, row2MidY);
+    ctx.fillText(t("hud.status.loading"), cssW / 2, row2MidY);
   }
 
   const gearR = 11;
@@ -930,7 +945,7 @@ function drawHud(): void {
     else if (btn === "hint" && hintBusy) fg = UI.btnHintActiveText;
     else if (btn === "hint") fg = UI.textGold;
     ctx.fillStyle = fg;
-    ctx.fillText(HUD_BUTTON_LABEL[btn], x + btnW / 2, btnMidY);
+    ctx.fillText(hudButtonLabel(btn), x + btnW / 2, btnMidY);
   }
 
   // 7) Bottom accent rule — thin gold line marks the boundary between HUD
@@ -1036,28 +1051,28 @@ function drawSecondaryCta(x: number, y: number, w: number, h: number, label: str
 function drawNoLivesOverlay(): NoLivesHitbox {
   const cardW = Math.min(330, cssW - 40);
   const cardH = 268;
-  const { cardX, cardY } = drawModalCard(cardW, cardH, "ENERGY", "心已用光");
+  const { cardX, cardY } = drawModalCard(cardW, cardH, t("noLives.eyebrow"), t("noLives.title"));
 
   ctx.fillStyle = UI.modalBody;
   ctx.font = `13px ${UI.fontDisplayCJK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("等待心数自动恢复，或观看广告 +1 心", cardX + cardW / 2, cardY + 88);
+  ctx.fillText(t("noLives.subShort"), cardX + cardW / 2, cardY + 88);
 
   tickLives();
   const ms = nextRegenMs();
   ctx.fillStyle = UI.modalAccent;
   ctx.font = `bold 28px ${UI.fontDisplayCJK}`;
-  ctx.fillText(ms == null ? "已恢复" : formatMs(ms), cardX + cardW / 2, cardY + 130);
+  ctx.fillText(ms == null ? t("noLives.recovered") : formatMs(ms), cardX + cardW / 2, cardY + 130);
 
   const btnW = cardW - 40;
   const btnH = 44;
   const adX = cardX + (cardW - btnW) / 2;
   const adY = cardY + 160;
-  drawPrimaryCta(adX, adY, btnW, btnH, "看广告 +1 心");
+  drawPrimaryCta(adX, adY, btnW, btnH, t("noLives.ad"));
 
   const closeY = adY + btnH + 10;
-  drawSecondaryCta(adX, closeY, btnW, btnH, "稍后再来");
+  drawSecondaryCta(adX, closeY, btnW, btnH, t("noLives.later"));
 
   return {
     ad: { x: adX, y: adY, w: btnW, h: btnH },
@@ -1068,23 +1083,23 @@ function drawNoLivesOverlay(): NoLivesHitbox {
 function drawNoHintsOverlay(): NoHintsHitbox {
   const cardW = Math.min(330, cssW - 40);
   const cardH = 248;
-  const { cardX, cardY } = drawModalCard(cardW, cardH, "HINT", "提示已用完");
+  const { cardX, cardY } = drawModalCard(cardW, cardH, t("noHints.eyebrow"), t("noHints.title"));
 
   ctx.fillStyle = UI.modalBody;
   ctx.font = `13px ${UI.fontDisplayCJK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(`看一段广告补 ${HINT_AD_REFILL} 次提示`, cardX + cardW / 2, cardY + 90);
-  ctx.fillText(`额外赠送 ${COIN_PER_AD} 金币`, cardX + cardW / 2, cardY + 112);
+  ctx.fillText(t("noHints.subAd", { n: HINT_AD_REFILL }), cardX + cardW / 2, cardY + 90);
+  ctx.fillText(t("noHints.subCoins", { n: COIN_PER_AD }), cardX + cardW / 2, cardY + 112);
 
   const btnW = cardW - 40;
   const btnH = 44;
   const adX = cardX + (cardW - btnW) / 2;
   const adY = cardY + 140;
-  drawPrimaryCta(adX, adY, btnW, btnH, `看广告 +${HINT_AD_REFILL} 提示`);
+  drawPrimaryCta(adX, adY, btnW, btnH, t("noHints.ad", { n: HINT_AD_REFILL }));
 
   const closeY = adY + btnH + 10;
-  drawSecondaryCta(adX, closeY, btnW, btnH, "稍后再来");
+  drawSecondaryCta(adX, closeY, btnW, btnH, t("noLives.later"));
 
   return {
     ad: { x: adX, y: adY, w: btnW, h: btnH },
@@ -1095,7 +1110,7 @@ function drawNoHintsOverlay(): NoHintsHitbox {
 function drawSettingsOverlay(): SettingsHitbox {
   const cardW = Math.min(330, cssW - 40);
   const cardH = 278;
-  const { cardX, cardY } = drawModalCard(cardW, cardH, "SETTINGS", "设置");
+  const { cardX, cardY } = drawModalCard(cardW, cardH, t("settings.eyebrow"), t("settings.title"));
 
   const rowW = cardW - 40;
   const rowH = 48;
@@ -1128,12 +1143,12 @@ function drawSettingsOverlay(): SettingsHitbox {
     return { x: rowX, y, w: rowW, h: rowH };
   };
 
-  const sfxBox = drawRow(cardY + 86, "音效", progress.settings.sfx);
-  const vibBox = drawRow(cardY + 86 + rowH + 12, "震动反馈", progress.settings.vibrate);
+  const sfxBox = drawRow(cardY + 86, t("settings.sfx"), progress.settings.sfx);
+  const vibBox = drawRow(cardY + 86 + rowH + 12, t("settings.vibrate"), progress.settings.vibrate);
 
   const btnH = 44;
   const closeY = cardY + cardH - btnH - 16;
-  drawSecondaryCta(rowX, closeY, rowW, btnH, "关闭");
+  drawSecondaryCta(rowX, closeY, rowW, btnH, t("settings.close"));
 
   return {
     sfx: sfxBox,
@@ -1157,11 +1172,11 @@ function drawLoadingOverlay(): void {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = `bold 11px ${UI.fontDisplayCJK}`;
-  ctx.fillText("LOADING", cssW / 2, boardTop + boardH / 2 - 22);
+  ctx.fillText(t("loading.eyebrow"), cssW / 2, boardTop + boardH / 2 - 22);
   ctx.fillStyle = UI.textPrimary;
   ctx.font = `bold ${Math.floor(Math.min(cssW, cssH) * 0.052)}px ${UI.fontDisplayCJK}`;
   const dots = ".".repeat(1 + (Math.floor(performance.now() / 350) % 3));
-  ctx.fillText(`加载关卡${dots}`, cssW / 2, boardTop + boardH / 2 + 4);
+  ctx.fillText(t("loading.label", { dots }), cssW / 2, boardTop + boardH / 2 + 4);
 }
 
 // --- splash --------------------------------------------------------------
@@ -1169,13 +1184,14 @@ function drawLoadingOverlay(): void {
 // 标题「箭路脱困」+ 健康游戏忠告 (8 短句, 备案文案) + 适龄提示 8+ +
 // 「开始游戏」按钮。备案首图截这一屏。
 
-const HEALTH_ADVISORY_LINES = [
-  "抵制不良游戏  拒绝盗版游戏",
-  "注意自我保护  谨防受骗上当",
-  "适度游戏益脑  沉迷游戏伤身",
-  "合理安排时间  享受健康生活",
-];
-const AGE_NOTICE = "适龄提示：本游戏适合 8 岁以上用户使用";
+function healthAdvisoryLines(): string[] {
+  return [
+    t("splash.advisory1"),
+    t("splash.advisory2"),
+    t("splash.advisory3"),
+    t("splash.advisory4"),
+  ];
+}
 
 function drawSplash(): { x: number; y: number; w: number; h: number } {
   // Full-screen warm-charcoal canvas.
@@ -1206,29 +1222,30 @@ function drawSplash(): { x: number; y: number; w: number; h: number } {
   // Title.
   ctx.fillStyle = UI.modalTitle;
   ctx.font = `bold ${Math.floor(Math.min(cssW, 480) * 0.13)}px ${UI.fontDisplayCJK}`;
-  ctx.fillText("箭路脱困", cx, titleY);
+  ctx.fillText(t("app.title"), cx, titleY);
 
   // Subtitle.
   ctx.fillStyle = UI.textSecondary;
   ctx.font = `13px ${UI.fontDisplayCJK}`;
-  ctx.fillText("休闲益智 · 箭头脱困谜题", cx, titleY + 42);
+  ctx.fillText(t("splash.subtitle"), cx, titleY + 42);
 
   // Health advisory block.
   const advisoryY = titleY + 118;
   ctx.fillStyle = UI.modalAccent;
   ctx.font = `bold 10px ${UI.fontDisplayCJK}`;
-  ctx.fillText("健 康 游 戏 忠 告", cx, advisoryY);
+  ctx.fillText(t("splash.advisoryTitle"), cx, advisoryY);
   ctx.fillStyle = UI.textPrimary;
   ctx.font = `12px ${UI.fontDisplayCJK}`;
-  for (let i = 0; i < HEALTH_ADVISORY_LINES.length; i++) {
-    ctx.fillText(HEALTH_ADVISORY_LINES[i]!, cx, advisoryY + 26 + i * 19);
+  const advisoryLines = healthAdvisoryLines();
+  for (let i = 0; i < advisoryLines.length; i++) {
+    ctx.fillText(advisoryLines[i]!, cx, advisoryY + 26 + i * 19);
   }
 
   // Age notice — mint green to signal "official".
-  const ageY = advisoryY + 26 + HEALTH_ADVISORY_LINES.length * 19 + 24;
+  const ageY = advisoryY + 26 + advisoryLines.length * 19 + 24;
   ctx.fillStyle = UI.statusWon;
   ctx.font = `bold 13px ${UI.fontDisplayCJK}`;
-  ctx.fillText(AGE_NOTICE, cx, ageY);
+  ctx.fillText(t("splash.ageNotice"), cx, ageY);
 
   // Start button — solid coral CTA, rounded.
   const btnW = Math.min(240, cssW - 64);
@@ -1240,7 +1257,7 @@ function drawSplash(): { x: number; y: number; w: number; h: number } {
   ctx.fill();
   ctx.fillStyle = UI.ctaPrimaryText;
   ctx.font = `bold 18px ${UI.fontDisplayCJK}`;
-  ctx.fillText("开始游戏", cx, btnY + btnH / 2);
+  ctx.fillText(t("splash.start"), cx, btnY + btnH / 2);
 
   return { x: btnX, y: btnY, w: btnW, h: btnH };
 }
