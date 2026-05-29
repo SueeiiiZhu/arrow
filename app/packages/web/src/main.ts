@@ -86,12 +86,15 @@ function startTween(id: number, before: number, after: number, escapedAtEnd: boo
 /** Visual feedback for a blocked pull: arrow advances `bump` cells, hits,
  *  then springs back to `from`. The body's logical progress doesn't change. */
 function startBounce(id: number, from: number, bump: number): void {
+  // Scale duration with bump distance so multi-cell partial pulls don't snap
+  // back in a blur, but small "wall thuds" still feel snappy.
+  const dur = Math.min(800, Math.max(280, bump * 160));
   tweens.set(id, {
     from,
     to: from,
     bounceTo: from + bump,
     start: performance.now(),
-    dur: 280,
+    dur,
     escapedAtEnd: false,
   });
   ensureRAF();
@@ -493,21 +496,25 @@ function handlePointer(clientX: number, clientY: number): void {
   const snap = snapshotGame(game);
   const result = tryPull(game, arrow.id);
   const after = arrow.progress;
-  if (result.steps > 0) {
+  if (result.escaped) {
     pushUndo(snap);
     if (hintArrowId === arrow.id) clearHint();
-    startTween(arrow.id, before, after, result.escaped);
-    if (result.escaped) synth.escape();
-    else synth.whoosh(result.steps);
+    startTween(arrow.id, before, after, true);
+    synth.escape();
   } else {
-    // Blocked. Charge a life and play a bounce-back to make the rejection
-    // legible; if the player is already out of lives, skip the bounce and
-    // surface the regen dialog (same flow as the reset button).
+    // Pull didn't escape — whether the arrow couldn't move at all or moved
+    // partially before getting stuck, it counts as a failed attempt: revert
+    // the partial movement, charge a life, and play a forward-then-recoil
+    // bounce to make the rejection legible. Out-of-lives funnels into the
+    // regen dialog (same as reset).
     if (!tryConsumeLife()) {
+      restoreGame(game, snap);
       openNoLivesDialog();
       return;
     }
-    startBounce(arrow.id, before, 0.55);
+    restoreGame(game, snap);
+    const bump = Math.max(0.55, after - before);
+    startBounce(arrow.id, before, bump);
     synth.thud();
   }
   if (result.won && currentKey) {

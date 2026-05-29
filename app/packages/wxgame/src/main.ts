@@ -416,12 +416,15 @@ function startTween(id: number, before: number, after: number, escapedAtEnd: boo
   ensureRAF();
 }
 function startBounce(id: number, from: number, bump: number): void {
+  // Scale duration with bump distance so multi-cell partial pulls don't snap
+  // back in a blur, but small "wall thuds" still feel snappy.
+  const dur = Math.min(800, Math.max(280, bump * 160));
   tweens.set(id, {
     from,
     to: from,
     bounceTo: from + bump,
     start: performance.now(),
-    dur: 280,
+    dur,
     escapedAtEnd: false,
   });
   ensureRAF();
@@ -1375,27 +1378,28 @@ wx.onTouchStart((e: WxTouchEvent) => {
   const snap = snapshotGame(game);
   const r = tryPull(game, arrow.id);
   const after = arrow.progress;
-  if (r.steps > 0) {
+  if (r.escaped) {
     undoStack.push(snap);
     if (undoStack.length > UNDO_CAP) undoStack.shift();
     if (hintArrowId === arrow.id) hintArrowId = null;
-    startTween(arrow.id, before, after, r.escaped);
-    if (r.escaped) {
-      synth.escape();
-      vibrate();
-    } else {
-      synth.whoosh(r.steps);
-    }
+    startTween(arrow.id, before, after, true);
+    synth.escape();
+    vibrate();
   } else {
-    // Blocked. Spend a life, then bounce-back to make the rejection
-    // legible. Out-of-lives funnels into the no-lives modal (same as reset).
+    // Pull didn't escape — whether the arrow couldn't move at all or moved
+    // partially before getting stuck, it counts as a failed attempt: revert
+    // the partial movement, charge a life, and play a forward-then-recoil
+    // bounce. Out-of-lives funnels into the no-lives modal (same as reset).
     if (!tryConsumeLife()) {
+      restoreGame(game, snap);
       modal = "noLives";
       ensureRAF();
       render();
       return;
     }
-    startBounce(arrow.id, before, 0.55);
+    restoreGame(game, snap);
+    const bump = Math.max(0.55, after - before);
+    startBounce(arrow.id, before, bump);
     synth.thud();
     vibrate();
   }
